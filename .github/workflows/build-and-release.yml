@@ -11,7 +11,8 @@ permissions:
 jobs:
   build:
     name: Build GateTree
-    runs-on: macos-14
+    # XcodeGen 2.46 emits Xcode 16 project format (77).
+    runs-on: macos-15
 
     steps:
       - name: Check out source
