@@ -1,0 +1,57 @@
+name: Build and release
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build GateTree
+    runs-on: macos-14
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: Build release app
+        run: |
+          xcodebuild \
+            -project GateTree.xcodeproj \
+            -scheme GateTree \
+            -configuration Release \
+            -derivedDataPath .build-xcode \
+            CODE_SIGNING_ALLOWED=NO \
+            build
+
+      - name: Package app
+        run: |
+          ditto -c -k --sequesterRsrc --keepParent \
+            .build-xcode/Build/Products/Release/GateTree.app \
+            GateTree-${{ github.ref_name }}.zip
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: GateTree-${{ github.ref_name }}
+          path: GateTree-${{ github.ref_name }}.zip
+          if-no-files-found: error
+
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ github.ref_name }}" \
+            "GateTree-${{ github.ref_name }}.zip" \
+            --title "GateTree ${{ github.ref_name }}" \
+            --generate-notes
