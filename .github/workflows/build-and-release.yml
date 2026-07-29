@@ -25,30 +25,59 @@ jobs:
           unzip -q "$RUNNER_TEMP/xcodegen.zip" -d "$RUNNER_TEMP"
           echo "$RUNNER_TEMP/xcodegen/bin" >> "$GITHUB_PATH"
 
-      - name: Generate Xcode project
-        run: xcodegen generate
-
-      - name: Build release app
+      - name: Configure Developer ID signing
+        env:
+          APPLE_CERTIFICATE_BASE64: ${{ secrets.APPLE_CERTIFICATE_BASE64 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
         run: |
-          xcodebuild \
-            -project GateTree.xcodeproj \
-            -scheme GateTree \
-            -configuration Release \
-            -derivedDataPath .build-xcode \
-            CODE_SIGNING_ALLOWED=NO \
-            build
+          if [ -z "$APPLE_CERTIFICATE_BASE64" ]; then
+            echo "No signing certificate configured; using ad-hoc signing."
+            exit 0
+          fi
+          certificate_path="$RUNNER_TEMP/DeveloperID.p12"
+          keychain_path="$RUNNER_TEMP/gatetree-signing.keychain-db"
+          echo "$APPLE_CERTIFICATE_BASE64" | base64 -D > "$certificate_path"
+          security create-keychain -p "" "$keychain_path"
+          security set-keychain-settings -lut 21600 "$keychain_path"
+          security unlock-keychain -p "" "$keychain_path"
+          security import "$certificate_path" \
+            -k "$keychain_path" \
+            -P "$APPLE_CERTIFICATE_PASSWORD" \
+            -T /usr/bin/codesign
+          security set-key-partition-list \
+            -S apple-tool:,apple:,codesign: \
+            -s -k "" "$keychain_path"
+          security list-keychain -d user -s "$keychain_path"
 
-      - name: Package app
+      - name: Configure notarization
+        env:
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
+          APPLE_API_PRIVATE_KEY: ${{ secrets.APPLE_API_PRIVATE_KEY }}
         run: |
-          ditto -c -k --sequesterRsrc --keepParent \
-            .build-xcode/Build/Products/Release/GateTree.app \
-            GateTree-${{ github.ref_name }}.zip
+          if [ -z "$APPLE_API_PRIVATE_KEY" ]; then
+            echo "No notarization API key configured; notarization is skipped."
+            exit 0
+          fi
+          api_key_path="$RUNNER_TEMP/AuthKey_${APPLE_API_KEY_ID}.p8"
+          printf '%s' "$APPLE_API_PRIVATE_KEY" > "$api_key_path"
+          xcrun notarytool store-credentials GateTree-notary \
+            --key "$api_key_path" \
+            --key-id "$APPLE_API_KEY_ID" \
+            --issuer "$APPLE_API_ISSUER_ID"
+
+      - name: Create distributable DMG
+        env:
+          DEVELOPER_ID: ${{ secrets.APPLE_DEVELOPER_ID }}
+          NOTARY_PROFILE: GateTree-notary
+        run: |
+          ./build/package.sh "${{ github.ref_name }}"
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
           name: GateTree-${{ github.ref_name }}
-          path: GateTree-${{ github.ref_name }}.zip
+          path: .dist/GateTree-${{ github.ref_name }}.dmg
           if-no-files-found: error
 
       - name: Create GitHub Release
@@ -57,6 +86,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release create "${{ github.ref_name }}" \
-            "GateTree-${{ github.ref_name }}.zip" \
+            ".dist/GateTree-${{ github.ref_name }}.dmg" \
             --title "GateTree ${{ github.ref_name }}" \
             --generate-notes

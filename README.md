@@ -71,6 +71,36 @@ open .build-xcode/Build/Products/Debug/GateTree.app
 The generated project and `.build-xcode` directory are local build output and
 are intentionally ignored by Git.
 
+## Create a distributable DMG
+
+```zsh
+./build/package.sh v0.1.0
+```
+
+Without a configured Developer ID certificate this produces an ad-hoc signed
+developer DMG in `.dist/`. For a public build, set `DEVELOPER_ID` and store an
+Apple notarization profile named `GateTree-notary` (or set
+`NOTARY_PROFILE`). The script then signs, notarizes and staples the DMG.
+
+## Automated GitHub releases
+
+Pushing a tag such as `v0.1.0` starts the GitHub Actions release workflow. It
+builds a DMG and attaches it to a GitHub Release automatically. Without Apple
+signing secrets the DMG is ad-hoc signed; it is useful for testing but will
+not be trusted by Gatekeeper.
+
+For signed, notarized public releases, configure these GitHub Actions secrets:
+
+- `APPLE_DEVELOPER_ID` — the complete Developer ID Application identity.
+- `APPLE_CERTIFICATE_BASE64` — base64-encoded `.p12` certificate including
+  the private key.
+- `APPLE_CERTIFICATE_PASSWORD` — password used for that `.p12`.
+- `APPLE_API_KEY_ID`, `APPLE_API_ISSUER_ID`, `APPLE_API_PRIVATE_KEY` — an
+  App Store Connect API key for notarization.
+
+The workflow imports the certificate only into the temporary GitHub runner
+keychain and creates a temporary `GateTree-notary` profile from the API key.
+
 ## Roadmap
 
 - RDP connections.
