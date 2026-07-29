@@ -18,7 +18,7 @@ struct ContentView: View {
                 GeometryReader { geometry in
                     let resolvedSidebarWidth = sidebarWidth ?? max(180, geometry.size.width * 0.2)
                     let maximumSidebarWidth = min(560, geometry.size.width * 0.6)
-                    let sidebarTreeHeight = max(120, geometry.size.height - 210)
+                    let sidebarTreeHeight = max(120, geometry.size.height - 290)
                     HStack(spacing: 0) {
                         if sidebarVisible {
                             VStack(spacing: 0) {
@@ -424,6 +424,14 @@ private struct HostInspector: View {
                     InspectorRow(label: "Credential", value: workspaceStore.credentialSummary(for: connection))
                 }
                 .padding(8)
+            } else if let webLink = workspaceStore.selectedWebLinkForInspector {
+                VStack(alignment: .leading, spacing: 3) {
+                    Label(webLink.name, systemImage: "globe")
+                        .font(.system(size: 12, weight: .medium))
+                    InspectorRow(label: "Type", value: "Web bookmark")
+                    InspectorRow(label: "URL", value: webLink.url)
+                }
+                .padding(8)
             } else {
                 Text("Select a connection to see its details.")
                     .font(.caption)
@@ -441,14 +449,14 @@ private struct InspectorRow: View {
     let value: String
 
     var body: some View {
-        HStack(spacing: 5) {
+        HStack(alignment: .top, spacing: 5) {
             Text(label)
                 .foregroundStyle(.secondary)
                 .frame(width: 62, alignment: .leading)
             Text(value)
-                .lineLimit(1)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
                 .textSelection(.enabled)
-            Spacer(minLength: 0)
         }
         .font(.system(size: 10))
     }
@@ -497,9 +505,7 @@ private struct FolderList: View {
                     .help(webLink.url)
                     .listRowInsets(EdgeInsets(top: 1, leading: 8, bottom: 1, trailing: 6))
                     .listRowBackground(treeSelectionBackground(for: webLink.id))
-                    .simultaneousGesture(TapGesture().onEnded {
-                        workspaceStore.selectTreeItem(webLink.id)
-                    })
+                    .onTapGesture { workspaceStore.selectTreeItem(webLink.id) }
                     .onTapGesture(count: 2) { workspaceStore.selectWebLink(webLink) }
                     .contextMenu { webLinkMenu(webLink) }
             }
@@ -563,14 +569,6 @@ private struct CredentialsManagerView: View {
                     systemImage: "key",
                     description: Text("Add a credential to reuse its username and password later."))
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if let webLink = workspaceStore.selectedWebLinkForInspector {
-                VStack(alignment: .leading, spacing: 3) {
-                    Label(webLink.name, systemImage: "globe")
-                        .font(.system(size: 12, weight: .medium))
-                    InspectorRow(label: "Type", value: "Web bookmark")
-                    InspectorRow(label: "URL", value: webLink.url)
-                }
-                .padding(8)
             } else {
                 List(workspaceStore.credentials) { credential in
                     HStack(spacing: 12) {
@@ -877,9 +875,7 @@ private struct FolderTreeRow: View {
                     .font(.system(size: 12, weight: .regular))
                     .listRowInsets(EdgeInsets(top: 1, leading: 8, bottom: 1, trailing: 6))
                     .listRowBackground(workspaceStore.selectedTreeItemIDs.contains(webLink.id) ? Color.accentColor.opacity(0.72) : .clear)
-                    .simultaneousGesture(TapGesture().onEnded {
-                        workspaceStore.selectTreeItem(webLink.id)
-                    })
+                    .onTapGesture { workspaceStore.selectTreeItem(webLink.id) }
                     .onTapGesture(count: 2) { workspaceStore.selectWebLink(webLink) }
                     .contextMenu {
                         Button("Edit…") { workspaceStore.showWebLinkEditor(webLink) }
