@@ -1,0 +1,12 @@
+.DS_Store
+.build/
+.build-xcode/
+DerivedData/
+GateTree.xcodeproj/
+xcuserdata/
+*.xcuserstate
+
+# Local workspaces, inventory imports and developer-only helpers
+*.gatetree
+scripts/
+run-debug.sh
