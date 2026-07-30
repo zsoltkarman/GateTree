@@ -611,11 +611,30 @@ private struct MyAITreeRow: View {
 private struct MyAISectionRow: View {
     @EnvironmentObject private var workspaceStore: SecureWorkspaceStore
     let section: MyAIWorkflow
+    @AppStorage private var isExpanded: Bool
+
+    init(section: MyAIWorkflow) {
+        self.section = section
+        _isExpanded = AppStorage(
+            wrappedValue: false,
+            "GateTree.myAI.\(section.key).expanded"
+        )
+    }
 
     var body: some View {
         Group {
             HStack(spacing: 6) {
                 TreeIndentation(depth: 1)
+                Button {
+                    isExpanded.toggle()
+                } label: {
+                    Image(systemName: isExpanded ? "minus.square" : "plus.square")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 12)
+                }
+                .buttonStyle(.plain)
+
                 Image(systemName: "folder")
                     .foregroundStyle(.secondary)
                     .frame(width: 14)
@@ -625,26 +644,31 @@ private struct MyAISectionRow: View {
             .font(.system(size: 12, weight: .regular))
             .listRowInsets(EdgeInsets(top: 1, leading: 8, bottom: 1, trailing: 6))
             .listRowBackground(workspaceStore.isMyAIItemSelected(section.key) ? Color.accentColor.opacity(0.72) : .clear)
-            .onTapGesture { workspaceStore.selectMyAIItem(section.key) }
+            .onTapGesture {
+                workspaceStore.selectMyAIItem(section.key)
+                isExpanded.toggle()
+            }
 
-            ForEach(section.actions) { action in
-                HStack(spacing: 6) {
-                    TreeIndentation(depth: 2)
-                    Image(systemName: "terminal")
-                        .foregroundStyle(.purple)
-                        .frame(width: 14)
-                    Text(action.title)
+            if isExpanded {
+                ForEach(section.actions) { action in
+                    HStack(spacing: 6) {
+                        TreeIndentation(depth: 2)
+                        Image(systemName: "terminal")
+                            .foregroundStyle(.purple)
+                            .frame(width: 14)
+                        Text(action.title)
+                    }
+                    .frame(height: 18)
+                    .font(.system(size: 12, weight: .regular))
+                    .listRowInsets(EdgeInsets(top: 1, leading: 8, bottom: 1, trailing: 6))
+                    .listRowBackground(workspaceStore.isMyAIItemSelected(action.option) ? Color.accentColor.opacity(0.72) : .clear)
+                    .onTapGesture { workspaceStore.selectMyAIItem(action.option) }
+                    .onTapGesture(count: 2) {
+                        workspaceStore.selectMyAIItem(action.option)
+                        MyAILauncher.openMenuInTerminal(option: action.option)
+                    }
+                    .help("Double-click to start My AI option \(action.option) in Terminal")
                 }
-                .frame(height: 18)
-                .font(.system(size: 12, weight: .regular))
-                .listRowInsets(EdgeInsets(top: 1, leading: 8, bottom: 1, trailing: 6))
-                .listRowBackground(workspaceStore.isMyAIItemSelected(action.option) ? Color.accentColor.opacity(0.72) : .clear)
-                .onTapGesture { workspaceStore.selectMyAIItem(action.option) }
-                .onTapGesture(count: 2) {
-                    workspaceStore.selectMyAIItem(action.option)
-                    MyAILauncher.openMenuInTerminal(option: action.option)
-                }
-                .help("Double-click to start My AI option \(action.option) in Terminal")
             }
         }
     }
