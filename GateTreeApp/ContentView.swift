@@ -144,6 +144,10 @@ struct ContentView: View {
             TerminalCommandForm()
                 .environmentObject(workspaceStore)
         }
+        .sheet(isPresented: $workspaceStore.isShowingTerminalCommandEditor) {
+            TerminalCommandEditorForm()
+                .environmentObject(workspaceStore)
+        }
         .sheet(isPresented: $workspaceStore.isShowingWebLinkEditor) {
             WebLinkEditorForm()
                 .environmentObject(workspaceStore)
@@ -530,6 +534,9 @@ private struct FolderList: View {
                     .listRowBackground(treeSelectionBackground(for: terminalCommand.id))
                     .onTapGesture { workspaceStore.selectTreeItem(terminalCommand.id) }
                     .onTapGesture(count: 2) { TerminalCommandLauncher.openInTerminal(terminalCommand.command) }
+                    .contextMenu {
+                        Button("Edit…") { workspaceStore.showTerminalCommandEditor(terminalCommand) }
+                    }
             }
 
             Color.clear
@@ -926,6 +933,9 @@ private struct FolderTreeRow: View {
                     .listRowBackground(workspaceStore.selectedTreeItemIDs.contains(terminalCommand.id) ? Color.accentColor.opacity(0.72) : .clear)
                     .onTapGesture { workspaceStore.selectTreeItem(terminalCommand.id) }
                     .onTapGesture(count: 2) { TerminalCommandLauncher.openInTerminal(terminalCommand.command) }
+                    .contextMenu {
+                        Button("Edit…") { workspaceStore.showTerminalCommandEditor(terminalCommand) }
+                    }
                 }
                 ForEach(folder.children) { child in
                     FolderTreeRow(folder: child, depth: depth + 1)
@@ -1158,6 +1168,34 @@ private struct TerminalCommandForm: View {
         }
         .padding(24)
         .frame(width: 420)
+    }
+}
+
+private struct TerminalCommandEditorForm: View {
+    @EnvironmentObject private var workspaceStore: SecureWorkspaceStore
+    @State private var name = ""
+    @State private var command = ""
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Edit Terminal Connection").font(.title2.weight(.semibold))
+            TextField("Name", text: $name).textFieldStyle(.roundedBorder)
+            TextField("Command", text: $command).textFieldStyle(.roundedBorder)
+            HStack {
+                Button("Cancel") { workspaceStore.cancelTerminalCommandEditor() }
+                Spacer()
+                Button("Save") { workspaceStore.updateTerminalCommand(name: name, command: command) }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || command.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }
+        .padding(24)
+        .frame(width: 420)
+        .onAppear {
+            guard let terminalCommand = workspaceStore.editingTerminalCommand else { return }
+            name = terminalCommand.name
+            command = terminalCommand.command
+        }
     }
 }
 

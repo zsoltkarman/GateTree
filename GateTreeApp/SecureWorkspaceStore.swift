@@ -38,6 +38,7 @@ final class SecureWorkspaceStore: ObservableObject {
     @Published var isShowingSSHConnectionCreation = false
     @Published var isShowingWebLinkCreation = false
     @Published var isShowingTerminalCommandCreation = false
+    @Published var isShowingTerminalCommandEditor = false
     @Published var isShowingWebLinkEditor = false
     @Published var isShowingSSHConnectionEditor = false
     @Published var isShowingSSHConnectionDeletionConfirmation = false
@@ -58,6 +59,7 @@ final class SecureWorkspaceStore: ObservableObject {
     private var sshConnectionParentFolderID: UUID?
     private var webLinkParentFolderID: UUID?
     private var terminalCommandParentFolderID: UUID?
+    @Published private(set) var editingTerminalCommand: TerminalCommand?
     @Published private(set) var editingWebLink: WebLink?
     @Published private(set) var editingSSHConnection: SSHConnection?
     private var deletingSSHConnectionID: UUID?
@@ -454,6 +456,36 @@ final class SecureWorkspaceStore: ObservableObject {
     func cancelTerminalCommandCreation() {
         terminalCommandParentFolderID = nil
         isShowingTerminalCommandCreation = false
+    }
+
+    func showTerminalCommandEditor(_ terminalCommand: TerminalCommand) {
+        guard !isProcessing else { return }
+        editingTerminalCommand = terminalCommand
+        isShowingTerminalCommandEditor = true
+    }
+
+    func updateTerminalCommand(name: String, command: String) {
+        guard let editingTerminalCommand, !isProcessing else { return }
+        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedCommand = command.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedName.isEmpty, !trimmedCommand.isEmpty else { return }
+
+        let updated = TerminalCommand(id: editingTerminalCommand.id, name: trimmedName, command: trimmedCommand)
+        if let index = rootTerminalCommands.firstIndex(where: { $0.id == updated.id }) {
+            rootTerminalCommands[index] = updated
+        } else if !updateTerminalCommand(updated, in: &folders) {
+            errorMessage = "The terminal connection is no longer available."
+            return
+        }
+        synchronizeWorkspace()
+        self.editingTerminalCommand = nil
+        isShowingTerminalCommandEditor = false
+        save()
+    }
+
+    func cancelTerminalCommandEditor() {
+        editingTerminalCommand = nil
+        isShowingTerminalCommandEditor = false
     }
 
     func createWebLink(name: String, urlString: String) {
@@ -1057,6 +1089,17 @@ final class SecureWorkspaceStore: ObservableObject {
                 return true
             }
             if updateWebLink(webLink, in: &folders[index].children) { return true }
+        }
+        return false
+    }
+
+    private func updateTerminalCommand(_ terminalCommand: TerminalCommand, in folders: inout [WorkspaceFolder]) -> Bool {
+        for index in folders.indices {
+            if let commandIndex = folders[index].terminalCommands.firstIndex(where: { $0.id == terminalCommand.id }) {
+                folders[index].terminalCommands[commandIndex] = terminalCommand
+                return true
+            }
+            if updateTerminalCommand(terminalCommand, in: &folders[index].children) { return true }
         }
         return false
     }
