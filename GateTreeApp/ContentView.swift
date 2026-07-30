@@ -61,6 +61,8 @@ struct ContentView: View {
 
                             if workspaceStore.isShowingCredentials {
                                 CredentialsManagerView()
+                            } else if workspaceStore.isMyAISelected {
+                                MyAIPlaceholderPane()
                             } else if !workspaceStore.openSSHConnections.isEmpty || !workspaceStore.openExternalWebLinks.isEmpty {
                                 VStack(spacing: 0) {
                                     SessionTabBar()
@@ -392,7 +394,7 @@ private struct SidebarApplications: View {
                 }
                 .buttonStyle(.plain)
 
-                if workspaceStore.hasTreeSelection {
+                if workspaceStore.hasAssignableTreeSelection {
                     Button {
                         workspaceStore.showCredentialAssignment()
                     } label: {
@@ -430,6 +432,13 @@ private struct HostInspector: View {
                         .font(.system(size: 12, weight: .medium))
                     InspectorRow(label: "Type", value: "Web bookmark")
                     InspectorRow(label: "URL", value: webLink.url)
+                }
+                .padding(8)
+            } else if workspaceStore.isMyAISelected {
+                VStack(alignment: .leading, spacing: 3) {
+                    Label("My AI", systemImage: "sparkles")
+                        .font(.system(size: 12, weight: .medium))
+                    InspectorRow(label: "Action", value: "Double-click to open the Codex menu in Terminal")
                 }
                 .padding(8)
             } else {
@@ -510,6 +519,8 @@ private struct FolderList: View {
                     .contextMenu { webLinkMenu(webLink) }
             }
 
+            MyAITreeRow()
+
             Color.clear
                 .frame(height: 1)
                 .onDrop(of: [.text], delegate: FolderDropDelegate(targetFolderID: nil, store: workspaceStore))
@@ -535,6 +546,39 @@ private struct FolderList: View {
     @ViewBuilder
     private func webLinkMenu(_ webLink: WebLink) -> some View {
         Button("Edit…") { workspaceStore.showWebLinkEditor(webLink) }
+    }
+}
+
+private struct MyAITreeRow: View {
+    @EnvironmentObject private var workspaceStore: SecureWorkspaceStore
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "sparkles")
+                .foregroundStyle(.purple)
+                .frame(width: 14)
+            Text("My AI")
+        }
+        .frame(height: 18)
+        .font(.system(size: 12, weight: .regular))
+        .listRowInsets(EdgeInsets(top: 1, leading: 8, bottom: 1, trailing: 6))
+        .listRowBackground(workspaceStore.isMyAISelected ? Color.accentColor.opacity(0.72) : .clear)
+        .onTapGesture { workspaceStore.selectMyAI() }
+        .onTapGesture(count: 2) {
+            workspaceStore.selectMyAI()
+            MyAILauncher.openMenuInTerminal()
+        }
+        .help("Double-click to open the My AI Codex menu in Terminal")
+    }
+}
+
+private struct MyAIPlaceholderPane: View {
+    var body: some View {
+        ContentUnavailableView {
+            Label("My AI", systemImage: "sparkles")
+        } description: {
+            Text("Double-click My AI in the sidebar to open the local Codex menu in a new Terminal window.")
+        }
     }
 }
 

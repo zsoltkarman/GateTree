@@ -8,6 +8,7 @@ import AppKit
 
 @MainActor
 final class SecureWorkspaceStore: ObservableObject {
+    private static let myAIItemID = UUID(uuidString: "6CA31FF5-1D3B-4C03-9DAF-364C7E4F4F6A")!
     @Published private(set) var isUnlocked = false
     @Published private(set) var needsMasterPasswordSetup: Bool
     @Published private(set) var isProcessing = false
@@ -750,6 +751,15 @@ final class SecureWorkspaceStore: ObservableObject {
         UserDefaults.standard.set(selectedTreeItemID?.uuidString, forKey: "GateTree.lastSelectedTreeItemID")
     }
 
+    func selectMyAI() {
+        isShowingCredentials = false
+        selectedTreeItemID = Self.myAIItemID
+        selectedTreeItemIDs = [Self.myAIItemID]
+        UserDefaults.standard.set(Self.myAIItemID.uuidString, forKey: "GateTree.lastSelectedTreeItemID")
+    }
+
+    var isMyAISelected: Bool { selectedTreeItemIDs.contains(Self.myAIItemID) }
+
     func isFolderExpanded(_ id: UUID) -> Bool {
         expandedFolderIDs.contains(id)
     }
@@ -764,9 +774,10 @@ final class SecureWorkspaceStore: ObservableObject {
     }
 
     var hasTreeSelection: Bool { !selectedTreeItemIDs.isEmpty }
+    var hasAssignableTreeSelection: Bool { hasTreeSelection && !isMyAISelected }
 
     func showCredentialAssignment() {
-        guard hasTreeSelection, !isProcessing else { return }
+        guard hasAssignableTreeSelection, !isProcessing else { return }
         selectedCredentialAssignmentID = nil
         isShowingCredentialAssignment = true
     }
