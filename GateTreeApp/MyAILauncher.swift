@@ -3,9 +3,10 @@
 import AppKit
 
 enum MyAILauncher {
-    static func openMenuInTerminal() {
+    static func openMenuInTerminal(option: String? = nil) {
         let codexPath = preferredCodexPath()
-        let command = "clear; \(codexPath) 'my-ai'; exec /bin/zsh -l"
+        let prompt = option.map { "my-ai \($0)" } ?? "my-ai"
+        let command = "clear; \(codexPath) '\(prompt)'; exec /bin/zsh -l"
         let source = """
         tell application "Terminal"
             activate

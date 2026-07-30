@@ -8,7 +8,21 @@ import AppKit
 
 @MainActor
 final class SecureWorkspaceStore: ObservableObject {
-    private static let myAIItemID = UUID(uuidString: "6CA31FF5-1D3B-4C03-9DAF-364C7E4F4F6A")!
+    private static let myAIItemIDs: [String: UUID] = [
+        "root": UUID(uuidString: "6CA31FF5-1D3B-4C03-9DAF-364C7E4F4F6A")!,
+        "personal": UUID(uuidString: "2A3E19BD-AB27-4AC7-9D74-1A3B46467AD4")!,
+        "on-call": UUID(uuidString: "7ECF490B-D60F-4F62-99F8-05DCC4BA8BEE")!,
+        "incident": UUID(uuidString: "C8B4928C-1D20-4CC1-A7A6-97F3D630AB02")!,
+        "handover": UUID(uuidString: "FF3C7B2D-1B72-4C94-B572-322586448CEE")!,
+        "1": UUID(uuidString: "E7FAE777-20B7-4A76-97A5-DDB6C395914C")!,
+        "11": UUID(uuidString: "2A35A80C-27E8-4BF4-9032-22D0B6A4F586")!,
+        "12": UUID(uuidString: "9E5E35EC-8A9C-4E6F-8E15-9FBD0B08B680")!,
+        "13": UUID(uuidString: "7634AFA8-8A5C-4E6D-9B3C-85DC74A4A54E")!,
+        "14": UUID(uuidString: "D3D9EABB-94EE-4D59-A46A-7B68F85AFA5A")!,
+        "15": UUID(uuidString: "98B8E995-7FAD-446A-A4C3-6D38B60A63B1")!,
+        "21": UUID(uuidString: "B0F0CFFA-AC98-4C93-9041-4BBD6C496AFD")!,
+        "31": UUID(uuidString: "833DAA8D-0667-4F85-8F2C-9E0B1A80C9A9")!
+    ]
     @Published private(set) var isUnlocked = false
     @Published private(set) var needsMasterPasswordSetup: Bool
     @Published private(set) var isProcessing = false
@@ -751,14 +765,20 @@ final class SecureWorkspaceStore: ObservableObject {
         UserDefaults.standard.set(selectedTreeItemID?.uuidString, forKey: "GateTree.lastSelectedTreeItemID")
     }
 
-    func selectMyAI() {
+    func selectMyAIItem(_ key: String = "root") {
+        guard let id = Self.myAIItemIDs[key] else { return }
         isShowingCredentials = false
-        selectedTreeItemID = Self.myAIItemID
-        selectedTreeItemIDs = [Self.myAIItemID]
-        UserDefaults.standard.set(Self.myAIItemID.uuidString, forKey: "GateTree.lastSelectedTreeItemID")
+        selectedTreeItemID = id
+        selectedTreeItemIDs = [id]
+        UserDefaults.standard.set(id.uuidString, forKey: "GateTree.lastSelectedTreeItemID")
     }
 
-    var isMyAISelected: Bool { selectedTreeItemIDs.contains(Self.myAIItemID) }
+    var isMyAISelected: Bool { selectedTreeItemIDs.contains { Self.myAIItemIDs.values.contains($0) } }
+
+    func isMyAIItemSelected(_ key: String) -> Bool {
+        guard let id = Self.myAIItemIDs[key] else { return false }
+        return selectedTreeItemIDs.contains(id)
+    }
 
     func isFolderExpanded(_ id: UUID) -> Bool {
         expandedFolderIDs.contains(id)
