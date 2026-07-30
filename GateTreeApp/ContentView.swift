@@ -551,7 +551,7 @@ private struct FolderList: View {
 
 private struct MyAITreeRow: View {
     @EnvironmentObject private var workspaceStore: SecureWorkspaceStore
-    @AppStorage("GateTree.myAIExpanded") private var isExpanded = true
+    @AppStorage("GateTree.myAIExpanded") private var isExpanded = false
 
     private let sections: [MyAIWorkflow] = [
         MyAIWorkflow(key: "personal", title: "Personal", actions: [
@@ -594,7 +594,10 @@ private struct MyAITreeRow: View {
             .font(.system(size: 12, weight: .regular))
             .listRowInsets(EdgeInsets(top: 1, leading: 8, bottom: 1, trailing: 6))
             .listRowBackground(workspaceStore.isMyAIItemSelected("root") ? Color.accentColor.opacity(0.72) : .clear)
-            .onTapGesture { workspaceStore.selectMyAIItem() }
+            .onTapGesture {
+                workspaceStore.selectMyAIItem()
+                isExpanded.toggle()
+            }
 
             if isExpanded {
                 ForEach(sections) { section in
