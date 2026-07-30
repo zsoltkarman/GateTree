@@ -18,7 +18,7 @@ struct ContentView: View {
                 GeometryReader { geometry in
                     let resolvedSidebarWidth = sidebarWidth ?? max(180, geometry.size.width * 0.2)
                     let maximumSidebarWidth = min(560, geometry.size.width * 0.6)
-                    let sidebarTreeHeight = max(120, geometry.size.height - 290)
+                    let sidebarTreeHeight = max(120, geometry.size.height - 320)
                     HStack(spacing: 0) {
                         if sidebarVisible {
                             VStack(spacing: 0) {
@@ -436,6 +436,15 @@ private struct HostInspector: View {
                     InspectorRow(label: "URL", value: webLink.url)
                 }
                 .padding(8)
+            } else if let terminalCommand = workspaceStore.selectedTerminalCommandForInspector {
+                VStack(alignment: .leading, spacing: 3) {
+                    Label(terminalCommand.name, systemImage: "terminal")
+                        .font(.system(size: 12, weight: .medium))
+                    InspectorRow(label: "Type", value: "Terminal connection")
+                    InspectorRow(label: "Command", value: terminalCommand.command)
+                    InspectorRow(label: "Action", value: "Double-click opens a new Terminal window")
+                }
+                .padding(8)
             } else {
                 Text("Select a connection to see its details.")
                     .font(.caption)
@@ -444,7 +453,7 @@ private struct HostInspector: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
-        .frame(minHeight: 76, alignment: .topLeading)
+        .frame(minHeight: 106, alignment: .topLeading)
     }
 }
 

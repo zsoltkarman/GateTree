@@ -1123,6 +1123,14 @@ final class SecureWorkspaceStore: ObservableObject {
         return findWebLink(selectedTreeItemID, in: folders)
     }
 
+    var selectedTerminalCommandForInspector: TerminalCommand? {
+        guard let selectedTreeItemID else { return nil }
+        if let terminalCommand = rootTerminalCommands.first(where: { $0.id == selectedTreeItemID }) {
+            return terminalCommand
+        }
+        return findTerminalCommand(selectedTreeItemID, in: folders)
+    }
+
     var editingFolderCredentialSummary: String {
         guard let editingFolderID, let folder = findFolder(editingFolderID, in: folders) else {
             return "Credential: Empty"
@@ -1181,6 +1189,16 @@ final class SecureWorkspaceStore: ObservableObject {
                 return webLink
             }
             if let webLink = findWebLink(id, in: folder.children) { return webLink }
+        }
+        return nil
+    }
+
+    private func findTerminalCommand(_ id: UUID, in folders: [WorkspaceFolder]) -> TerminalCommand? {
+        for folder in folders {
+            if let terminalCommand = folder.terminalCommands.first(where: { $0.id == id }) {
+                return terminalCommand
+            }
+            if let terminalCommand = findTerminalCommand(id, in: folder.children) { return terminalCommand }
         }
         return nil
     }
