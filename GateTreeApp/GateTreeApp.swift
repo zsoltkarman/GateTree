@@ -27,6 +27,12 @@ struct GateTreeApp: App {
                 .keyboardShortcut("n", modifiers: [.command, .shift])
                 .disabled(!workspaceStore.isUnlocked || workspaceStore.isProcessing)
             }
+            CommandMenu("AI") {
+                Button("My AI…") {
+                    MyAILauncher.openMenuInTerminal()
+                }
+                .keyboardShortcut("i", modifiers: [.command, .option])
+            }
             CommandMenu("Security") {
                 if workspaceStore.storageMode == .encrypted {
                     Button("Change Master Password…") {
