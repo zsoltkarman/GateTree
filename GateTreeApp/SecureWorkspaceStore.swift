@@ -2,6 +2,8 @@
 
 import CommonCrypto
 import CryptoKit
+import Dispatch
+import Darwin
 import Foundation
 import Security
 import AppKit
@@ -69,6 +71,8 @@ final class SecureWorkspaceStore: ObservableObject {
     private var lastOpenedWebLinkID: UUID?
     private var lastOpenedWebLinkDate: Date = .distantPast
     private var sshPasswordsByConnectionID: [UUID: String] = [:]
+    private var workspaceWatcher: DispatchSourceFileSystemObject?
+    private var workspaceReloadTask: Task<Void, Never>?
 
     init(fileManager: FileManager = .default) {
         expandedFolderIDs = Set(
@@ -79,6 +83,7 @@ final class SecureWorkspaceStore: ObservableObject {
         if let restoredSelectedTreeItemID {
             selectedTreeItemIDs = [restoredSelectedTreeItemID]
         }
+        startWorkspaceWatcher()
         guard fileManager.fileExists(atPath: WorkspaceCrypto.configURL.path) else {
             needsMasterPasswordSetup = true
             return
@@ -102,6 +107,65 @@ final class SecureWorkspaceStore: ObservableObject {
                 needsMasterPasswordSetup = false
                 errorMessage = "The workspace file is not readable."
             }
+        }
+    }
+
+    deinit {
+        workspaceReloadTask?.cancel()
+        workspaceWatcher?.cancel()
+    }
+
+    private func startWorkspaceWatcher() {
+        let directoryURL = WorkspaceCrypto.configURL.deletingLastPathComponent()
+        let descriptor = open(directoryURL.path, O_EVTONLY)
+        guard descriptor >= 0 else { return }
+
+        let source = DispatchSource.makeFileSystemObjectSource(
+            fileDescriptor: descriptor,
+            eventMask: [.write, .rename],
+            queue: DispatchQueue.global(qos: .utility)
+        )
+        source.setEventHandler { [weak self] in
+            Task { @MainActor [weak self] in
+                self?.scheduleWorkspaceReload()
+            }
+        }
+        source.setCancelHandler {
+            close(descriptor)
+        }
+        workspaceWatcher = source
+        source.resume()
+    }
+
+    private func scheduleWorkspaceReload() {
+        guard isUnlocked, !isProcessing else { return }
+        workspaceReloadTask?.cancel()
+        workspaceReloadTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 350_000_000)
+            guard !Task.isCancelled else { return }
+            self?.reloadWorkspaceFromDisk()
+        }
+    }
+
+    private func reloadWorkspaceFromDisk() {
+        guard isUnlocked, !isProcessing else { return }
+        do {
+            let loadedWorkspace: Workspace
+            switch storageMode {
+            case .encrypted:
+                guard let masterPassword else { return }
+                loadedWorkspace = try WorkspaceCrypto.load(password: masterPassword)
+            case .plaintext:
+                loadedWorkspace = try WorkspaceCrypto.loadPlaintext()
+            }
+            workspace = loadedWorkspace
+            folders = loadedWorkspace.folders
+            rootConnections = loadedWorkspace.rootConnections
+            rootWebLinks = loadedWorkspace.rootWebLinks
+            rootTerminalCommands = loadedWorkspace.rootTerminalCommands
+            credentials = loadedWorkspace.credentials
+        } catch {
+            errorMessage = "The workspace changed outside GateTree but could not be reloaded."
         }
     }
 
