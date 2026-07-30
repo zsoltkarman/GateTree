@@ -32,7 +32,7 @@ struct ContentView: View {
 
                                 Divider()
 
-                                FolderList()
+                                FolderList(searchText: searchText)
                                     .frame(height: sidebarTreeHeight, alignment: .top)
 
                                 Divider()
@@ -479,23 +479,63 @@ private struct InspectorRow: View {
     }
 }
 
+private func matchesSearch(_ values: [String], query: String) -> Bool {
+    let needle = query.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !needle.isEmpty else { return true }
+    return values.contains { $0.localizedCaseInsensitiveContains(needle) }
+}
+
+private func sshMatchesSearch(_ connection: SSHConnection, query: String) -> Bool {
+    matchesSearch([connection.name, connection.host, connection.username, String(connection.port)], query: query)
+}
+
+private func webLinkMatchesSearch(_ webLink: WebLink, query: String) -> Bool {
+    matchesSearch([webLink.name, webLink.url], query: query)
+}
+
+private func terminalCommandMatchesSearch(_ terminalCommand: TerminalCommand, query: String) -> Bool {
+    matchesSearch([terminalCommand.name, terminalCommand.command], query: query)
+}
+
+private func folderMatchesSearch(_ folder: WorkspaceFolder, query: String) -> Bool {
+    matchesSearch([folder.name], query: query) ||
+    folder.connections.contains { sshMatchesSearch($0, query: query) } ||
+    folder.webLinks.contains { webLinkMatchesSearch($0, query: query) } ||
+    folder.terminalCommands.contains { terminalCommandMatchesSearch($0, query: query) } ||
+    folder.children.contains { folderMatchesSearch($0, query: query) }
+}
+
 private struct FolderList: View {
     @EnvironmentObject private var workspaceStore: SecureWorkspaceStore
+    let searchText: String
+
+    private var isFiltering: Bool { !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    private var hasResults: Bool {
+        workspaceStore.folders.contains { folderMatchesSearch($0, query: searchText) } ||
+        workspaceStore.rootConnections.contains { sshMatchesSearch($0, query: searchText) } ||
+        workspaceStore.rootWebLinks.contains { webLinkMatchesSearch($0, query: searchText) } ||
+        workspaceStore.rootTerminalCommands.contains { terminalCommandMatchesSearch($0, query: searchText) }
+    }
 
     var body: some View {
         List {
-            if workspaceStore.folders.isEmpty {
+            if isFiltering && !hasResults {
+                ContentUnavailableView(
+                    "No matches",
+                    systemImage: "magnifyingglass",
+                    description: Text("Try a connection name, host, URL or terminal command."))
+            } else if workspaceStore.folders.isEmpty && workspaceStore.rootConnections.isEmpty && workspaceStore.rootWebLinks.isEmpty && workspaceStore.rootTerminalCommands.isEmpty {
                 ContentUnavailableView(
                     "No folders",
                     systemImage: "folder",
                     description: Text("Use Connections → New Folder to start."))
             } else {
-                ForEach(workspaceStore.folders) { folder in
-                    FolderTreeRow(folder: folder, depth: 0)
+                ForEach(workspaceStore.folders.filter { !isFiltering || folderMatchesSearch($0, query: searchText) }) { folder in
+                    FolderTreeRow(folder: folder, depth: 0, searchText: searchText)
                 }
             }
 
-            ForEach(workspaceStore.rootConnections) { connection in
+            ForEach(workspaceStore.rootConnections.filter { !isFiltering || sshMatchesSearch($0, query: searchText) }) { connection in
                 SSHConnectionLabel(name: connection.name)
                     .help("SSH: \(connection.host):\(connection.port)")
                     .listRowInsets(EdgeInsets(top: 1, leading: 8, bottom: 1, trailing: 6))
@@ -517,7 +557,7 @@ private struct FolderList: View {
                     }
             }
 
-            ForEach(workspaceStore.rootWebLinks) { webLink in
+            ForEach(workspaceStore.rootWebLinks.filter { !isFiltering || webLinkMatchesSearch($0, query: searchText) }) { webLink in
                 WebLinkLabel(name: webLink.name, url: webLink.url)
                     .help(webLink.url)
                     .listRowInsets(EdgeInsets(top: 1, leading: 8, bottom: 1, trailing: 6))
@@ -527,7 +567,7 @@ private struct FolderList: View {
                     .contextMenu { webLinkMenu(webLink) }
             }
 
-            ForEach(workspaceStore.rootTerminalCommands) { terminalCommand in
+            ForEach(workspaceStore.rootTerminalCommands.filter { !isFiltering || terminalCommandMatchesSearch($0, query: searchText) }) { terminalCommand in
                 TerminalCommandLabel(name: terminalCommand.name)
                     .help(terminalCommand.command)
                     .listRowInsets(EdgeInsets(top: 1, leading: 8, bottom: 1, trailing: 6))
@@ -826,9 +866,15 @@ private struct FolderTreeRow: View {
     @EnvironmentObject private var workspaceStore: SecureWorkspaceStore
     let folder: WorkspaceFolder
     let depth: Int
+    let searchText: String
 
-    private var hasContents: Bool { !folder.children.isEmpty || !folder.connections.isEmpty || !folder.webLinks.isEmpty || !folder.terminalCommands.isEmpty }
-    private var isExpanded: Bool { workspaceStore.isFolderExpanded(folder.id) }
+    private var isFiltering: Bool { !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    private var matchingConnections: [SSHConnection] { folder.connections.filter { !isFiltering || sshMatchesSearch($0, query: searchText) } }
+    private var matchingWebLinks: [WebLink] { folder.webLinks.filter { !isFiltering || webLinkMatchesSearch($0, query: searchText) } }
+    private var matchingTerminalCommands: [TerminalCommand] { folder.terminalCommands.filter { !isFiltering || terminalCommandMatchesSearch($0, query: searchText) } }
+    private var matchingChildren: [WorkspaceFolder] { folder.children.filter { !isFiltering || folderMatchesSearch($0, query: searchText) } }
+    private var hasContents: Bool { !matchingChildren.isEmpty || !matchingConnections.isEmpty || !matchingWebLinks.isEmpty || !matchingTerminalCommands.isEmpty }
+    private var isExpanded: Bool { isFiltering ? hasContents : workspaceStore.isFolderExpanded(folder.id) }
 
     var body: some View {
         Group {
@@ -887,7 +933,7 @@ private struct FolderTreeRow: View {
             .onDrop(of: [.text], delegate: FolderDropDelegate(targetFolderID: folder.id, store: workspaceStore))
 
             if isExpanded {
-                ForEach(folder.connections) { connection in
+                ForEach(matchingConnections) { connection in
                     HStack(spacing: 6) {
                         TreeIndentation(depth: depth + 1)
                         SSHConnectionLabel(name: connection.name)
@@ -905,7 +951,7 @@ private struct FolderTreeRow: View {
                         }
                         .contextMenu { connectionMenu(connection) }
                 }
-                ForEach(folder.webLinks) { webLink in
+                ForEach(matchingWebLinks) { webLink in
                     HStack(spacing: 6) {
                         TreeIndentation(depth: depth + 1)
                         WebLinkLabel(name: webLink.name, url: webLink.url)
@@ -921,7 +967,7 @@ private struct FolderTreeRow: View {
                         Button("Edit…") { workspaceStore.showWebLinkEditor(webLink) }
                     }
                 }
-                ForEach(folder.terminalCommands) { terminalCommand in
+                ForEach(matchingTerminalCommands) { terminalCommand in
                     HStack(spacing: 6) {
                         TreeIndentation(depth: depth + 1)
                         TerminalCommandLabel(name: terminalCommand.name)
@@ -937,8 +983,8 @@ private struct FolderTreeRow: View {
                         Button("Edit…") { workspaceStore.showTerminalCommandEditor(terminalCommand) }
                     }
                 }
-                ForEach(folder.children) { child in
-                    FolderTreeRow(folder: child, depth: depth + 1)
+                ForEach(matchingChildren) { child in
+                    FolderTreeRow(folder: child, depth: depth + 1, searchText: searchText)
                 }
             }
         }
