@@ -2,11 +2,8 @@
 
 import AppKit
 
-enum MyAILauncher {
-    static func openMenuInTerminal(option: String? = nil) {
-        let codexPath = preferredCodexPath()
-        let prompt = option.map { "my-ai \($0)" } ?? "my-ai"
-        let command = "clear; \(codexPath) '\(prompt)'; exec /bin/zsh -l"
+enum TerminalCommandLauncher {
+    static func openInTerminal(_ command: String) {
         let source = """
         tell application "Terminal"
             activate
@@ -21,19 +18,11 @@ enum MyAILauncher {
             let message = error[NSAppleScript.errorMessage] as? String
                 ?? "macOS could not open Terminal."
             let alert = NSAlert()
-            alert.messageText = "Could Not Open My AI"
+            alert.messageText = "Could Not Open Terminal"
             alert.informativeText = message
             alert.alertStyle = .warning
             alert.runModal()
         }
-    }
-
-    private static func preferredCodexPath() -> String {
-        let candidates = ["/opt/homebrew/bin/codex", "/usr/local/bin/codex"]
-        if let path = candidates.first(where: FileManager.default.isExecutableFile(atPath:)) {
-            return path
-        }
-        return "/usr/bin/env codex"
     }
 
     private static func appleScriptString(_ value: String) -> String {

@@ -61,8 +61,6 @@ struct ContentView: View {
 
                             if workspaceStore.isShowingCredentials {
                                 CredentialsManagerView()
-                            } else if workspaceStore.isMyAISelected {
-                                MyAIPlaceholderPane()
                             } else if !workspaceStore.openSSHConnections.isEmpty || !workspaceStore.openExternalWebLinks.isEmpty {
                                 VStack(spacing: 0) {
                                     SessionTabBar()
@@ -140,6 +138,10 @@ struct ContentView: View {
         }
         .sheet(isPresented: $workspaceStore.isShowingWebLinkCreation) {
             WebLinkForm()
+                .environmentObject(workspaceStore)
+        }
+        .sheet(isPresented: $workspaceStore.isShowingTerminalCommandCreation) {
+            TerminalCommandForm()
                 .environmentObject(workspaceStore)
         }
         .sheet(isPresented: $workspaceStore.isShowingWebLinkEditor) {
@@ -434,13 +436,6 @@ private struct HostInspector: View {
                     InspectorRow(label: "URL", value: webLink.url)
                 }
                 .padding(8)
-            } else if workspaceStore.isMyAISelected {
-                VStack(alignment: .leading, spacing: 3) {
-                    Label("My AI", systemImage: "sparkles")
-                        .font(.system(size: 12, weight: .medium))
-                    InspectorRow(label: "Action", value: "Double-click to open the Codex menu in Terminal")
-                }
-                .padding(8)
             } else {
                 Text("Select a connection to see its details.")
                     .font(.caption)
@@ -519,7 +514,14 @@ private struct FolderList: View {
                     .contextMenu { webLinkMenu(webLink) }
             }
 
-            MyAITreeRow()
+            ForEach(workspaceStore.rootTerminalCommands) { terminalCommand in
+                TerminalCommandLabel(name: terminalCommand.name)
+                    .help(terminalCommand.command)
+                    .listRowInsets(EdgeInsets(top: 1, leading: 8, bottom: 1, trailing: 6))
+                    .listRowBackground(treeSelectionBackground(for: terminalCommand.id))
+                    .onTapGesture { workspaceStore.selectTreeItem(terminalCommand.id) }
+                    .onTapGesture(count: 2) { TerminalCommandLauncher.openInTerminal(terminalCommand.command) }
+            }
 
             Color.clear
                 .frame(height: 1)
@@ -530,8 +532,9 @@ private struct FolderList: View {
         .font(.system(size: 12, weight: .regular))
         .contextMenu {
             Menu("New Connection") {
-                Button("SSH") { workspaceStore.showSSHConnectionCreation() }
-                Button("Web Link") { workspaceStore.showWebLinkCreation() }
+                Button("Server (SSH)") { workspaceStore.showSSHConnectionCreation() }
+                Button("URL") { workspaceStore.showWebLinkCreation() }
+                Button("Terminal") { workspaceStore.showTerminalCommandCreation() }
             }
             Button("New Folder") {
                 workspaceStore.showFolderCreation()
@@ -546,156 +549,6 @@ private struct FolderList: View {
     @ViewBuilder
     private func webLinkMenu(_ webLink: WebLink) -> some View {
         Button("Edit…") { workspaceStore.showWebLinkEditor(webLink) }
-    }
-}
-
-private struct MyAITreeRow: View {
-    @EnvironmentObject private var workspaceStore: SecureWorkspaceStore
-    @AppStorage("GateTree.myAIExpanded") private var isExpanded = false
-
-    private let sections: [MyAIWorkflow] = [
-        MyAIWorkflow(key: "personal", title: "Personal", actions: [
-            MyAIWorkflowAction(option: "1", title: "Morning catch-up")
-        ]),
-        MyAIWorkflow(key: "on-call", title: "On-call", actions: [
-            MyAIWorkflowAction(option: "11", title: "Open alerts"),
-            MyAIWorkflowAction(option: "12", title: "Today's shift"),
-            MyAIWorkflowAction(option: "13", title: "Last 24 hours"),
-            MyAIWorkflowAction(option: "14", title: "Last week"),
-            MyAIWorkflowAction(option: "15", title: "Last 30 days")
-        ]),
-        MyAIWorkflow(key: "incident", title: "Incident triage", actions: [
-            MyAIWorkflowAction(option: "21", title: "Investigate incident")
-        ]),
-        MyAIWorkflow(key: "handover", title: "Shift handover", actions: [
-            MyAIWorkflowAction(option: "31", title: "Today's EU shift")
-        ])
-    ]
-
-    var body: some View {
-        Group {
-            HStack(spacing: 6) {
-                Button {
-                    isExpanded.toggle()
-                } label: {
-                    Image(systemName: isExpanded ? "minus.square" : "plus.square")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
-                        .frame(width: 12)
-                }
-                .buttonStyle(.plain)
-
-                Image(systemName: "sparkles")
-                    .foregroundStyle(.purple)
-                    .frame(width: 14)
-                Text("My AI")
-            }
-            .frame(height: 18)
-            .font(.system(size: 12, weight: .regular))
-            .listRowInsets(EdgeInsets(top: 1, leading: 8, bottom: 1, trailing: 6))
-            .listRowBackground(workspaceStore.isMyAIItemSelected("root") ? Color.accentColor.opacity(0.72) : .clear)
-            .onTapGesture {
-                workspaceStore.selectMyAIItem()
-                isExpanded.toggle()
-            }
-
-            if isExpanded {
-                ForEach(sections) { section in
-                    MyAISectionRow(section: section)
-                }
-            }
-        }
-    }
-}
-
-private struct MyAISectionRow: View {
-    @EnvironmentObject private var workspaceStore: SecureWorkspaceStore
-    let section: MyAIWorkflow
-    @AppStorage private var isExpanded: Bool
-
-    init(section: MyAIWorkflow) {
-        self.section = section
-        _isExpanded = AppStorage(
-            wrappedValue: false,
-            "GateTree.myAI.\(section.key).expanded"
-        )
-    }
-
-    var body: some View {
-        Group {
-            HStack(spacing: 6) {
-                TreeIndentation(depth: 1)
-                Button {
-                    isExpanded.toggle()
-                } label: {
-                    Image(systemName: isExpanded ? "minus.square" : "plus.square")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
-                        .frame(width: 12)
-                }
-                .buttonStyle(.plain)
-
-                Image(systemName: "folder")
-                    .foregroundStyle(.secondary)
-                    .frame(width: 14)
-                Text(section.title)
-            }
-            .frame(height: 18)
-            .font(.system(size: 12, weight: .regular))
-            .listRowInsets(EdgeInsets(top: 1, leading: 8, bottom: 1, trailing: 6))
-            .listRowBackground(workspaceStore.isMyAIItemSelected(section.key) ? Color.accentColor.opacity(0.72) : .clear)
-            .onTapGesture {
-                workspaceStore.selectMyAIItem(section.key)
-                isExpanded.toggle()
-            }
-
-            if isExpanded {
-                ForEach(section.actions) { action in
-                    HStack(spacing: 6) {
-                        TreeIndentation(depth: 2)
-                        Image(systemName: "terminal")
-                            .foregroundStyle(.purple)
-                            .frame(width: 14)
-                        Text(action.title)
-                    }
-                    .frame(height: 18)
-                    .font(.system(size: 12, weight: .regular))
-                    .listRowInsets(EdgeInsets(top: 1, leading: 8, bottom: 1, trailing: 6))
-                    .listRowBackground(workspaceStore.isMyAIItemSelected(action.option) ? Color.accentColor.opacity(0.72) : .clear)
-                    .onTapGesture { workspaceStore.selectMyAIItem(action.option) }
-                    .onTapGesture(count: 2) {
-                        workspaceStore.selectMyAIItem(action.option)
-                        MyAILauncher.openMenuInTerminal(option: action.option)
-                    }
-                    .help("Double-click to start My AI option \(action.option) in Terminal")
-                }
-            }
-        }
-    }
-}
-
-private struct MyAIWorkflow: Identifiable {
-    let key: String
-    let title: String
-    let actions: [MyAIWorkflowAction]
-
-    var id: String { key }
-}
-
-private struct MyAIWorkflowAction: Identifiable {
-    let option: String
-    let title: String
-
-    var id: String { option }
-}
-
-private struct MyAIPlaceholderPane: View {
-    var body: some View {
-        ContentUnavailableView {
-            Label("My AI", systemImage: "sparkles")
-        } description: {
-            Text("Choose a My AI workflow in the sidebar and double-click it to start it in a new Terminal window.")
-        }
     }
 }
 
@@ -900,6 +753,15 @@ private struct WebLinkLabel: View {
     }
 }
 
+private struct TerminalCommandLabel: View {
+    let name: String
+
+    var body: some View {
+        Label(name, systemImage: "terminal")
+            .foregroundStyle(.purple)
+    }
+}
+
 private struct EmbeddedWebPane: View {
     @EnvironmentObject private var workspaceStore: SecureWorkspaceStore
     let webLink: WebLink
@@ -949,7 +811,7 @@ private struct FolderTreeRow: View {
     let folder: WorkspaceFolder
     let depth: Int
 
-    private var hasContents: Bool { !folder.children.isEmpty || !folder.connections.isEmpty || !folder.webLinks.isEmpty }
+    private var hasContents: Bool { !folder.children.isEmpty || !folder.connections.isEmpty || !folder.webLinks.isEmpty || !folder.terminalCommands.isEmpty }
     private var isExpanded: Bool { workspaceStore.isFolderExpanded(folder.id) }
 
     var body: some View {
@@ -990,8 +852,9 @@ private struct FolderTreeRow: View {
                 }
                 Divider()
                 Menu("New Connection") {
-                    Button("SSH") { workspaceStore.showSSHConnectionCreation(in: folder) }
-                    Button("Web Link") { workspaceStore.showWebLinkCreation(in: folder) }
+                    Button("Server (SSH)") { workspaceStore.showSSHConnectionCreation(in: folder) }
+                    Button("URL") { workspaceStore.showWebLinkCreation(in: folder) }
+                    Button("Terminal") { workspaceStore.showTerminalCommandCreation(in: folder) }
                 }
                 Button("New Folder") {
                     workspaceStore.showFolderCreation(parentID: folder.id)
@@ -1000,7 +863,7 @@ private struct FolderTreeRow: View {
                 Button("Delete…", role: .destructive) {
                     workspaceStore.showFolderDeletionConfirmation(folder)
                 }
-                .disabled(!folder.children.isEmpty || !folder.connections.isEmpty || !folder.webLinks.isEmpty)
+                .disabled(!folder.children.isEmpty || !folder.connections.isEmpty || !folder.webLinks.isEmpty || !folder.terminalCommands.isEmpty)
             }
             .onDrag {
                 NSItemProvider(object: folder.id.uuidString as NSString)
@@ -1041,6 +904,19 @@ private struct FolderTreeRow: View {
                     .contextMenu {
                         Button("Edit…") { workspaceStore.showWebLinkEditor(webLink) }
                     }
+                }
+                ForEach(folder.terminalCommands) { terminalCommand in
+                    HStack(spacing: 6) {
+                        TreeIndentation(depth: depth + 1)
+                        TerminalCommandLabel(name: terminalCommand.name)
+                    }
+                    .frame(height: 18)
+                    .help(terminalCommand.command)
+                    .font(.system(size: 12, weight: .regular))
+                    .listRowInsets(EdgeInsets(top: 1, leading: 8, bottom: 1, trailing: 6))
+                    .listRowBackground(workspaceStore.selectedTreeItemIDs.contains(terminalCommand.id) ? Color.accentColor.opacity(0.72) : .clear)
+                    .onTapGesture { workspaceStore.selectTreeItem(terminalCommand.id) }
+                    .onTapGesture(count: 2) { TerminalCommandLauncher.openInTerminal(terminalCommand.command) }
                 }
                 ForEach(folder.children) { child in
                     FolderTreeRow(folder: child, depth: depth + 1)
@@ -1241,6 +1117,34 @@ private struct WebLinkForm: View {
                 Button("Add Web Link") { workspaceStore.createWebLink(name: name, urlString: url) }
                     .buttonStyle(.borderedProminent)
                     .disabled(url.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }
+        .padding(24)
+        .frame(width: 420)
+    }
+}
+
+private struct TerminalCommandForm: View {
+    @EnvironmentObject private var workspaceStore: SecureWorkspaceStore
+    @State private var name = ""
+    @State private var command = ""
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("New Terminal Connection").font(.title2.weight(.semibold))
+            TextField("Name", text: $name).textFieldStyle(.roundedBorder)
+            TextField("Command", text: $command).textFieldStyle(.roundedBorder)
+            Text("The command runs in a new Terminal window when you double-click this item.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            HStack {
+                Button("Cancel") { workspaceStore.cancelTerminalCommandCreation() }
+                Spacer()
+                Button("Add Terminal Connection") {
+                    workspaceStore.createTerminalCommand(name: name, command: command)
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || command.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
         }
         .padding(24)

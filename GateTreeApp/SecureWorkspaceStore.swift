@@ -8,21 +8,6 @@ import AppKit
 
 @MainActor
 final class SecureWorkspaceStore: ObservableObject {
-    private static let myAIItemIDs: [String: UUID] = [
-        "root": UUID(uuidString: "6CA31FF5-1D3B-4C03-9DAF-364C7E4F4F6A")!,
-        "personal": UUID(uuidString: "2A3E19BD-AB27-4AC7-9D74-1A3B46467AD4")!,
-        "on-call": UUID(uuidString: "7ECF490B-D60F-4F62-99F8-05DCC4BA8BEE")!,
-        "incident": UUID(uuidString: "C8B4928C-1D20-4CC1-A7A6-97F3D630AB02")!,
-        "handover": UUID(uuidString: "FF3C7B2D-1B72-4C94-B572-322586448CEE")!,
-        "1": UUID(uuidString: "E7FAE777-20B7-4A76-97A5-DDB6C395914C")!,
-        "11": UUID(uuidString: "2A35A80C-27E8-4BF4-9032-22D0B6A4F586")!,
-        "12": UUID(uuidString: "9E5E35EC-8A9C-4E6F-8E15-9FBD0B08B680")!,
-        "13": UUID(uuidString: "7634AFA8-8A5C-4E6D-9B3C-85DC74A4A54E")!,
-        "14": UUID(uuidString: "D3D9EABB-94EE-4D59-A46A-7B68F85AFA5A")!,
-        "15": UUID(uuidString: "98B8E995-7FAD-446A-A4C3-6D38B60A63B1")!,
-        "21": UUID(uuidString: "B0F0CFFA-AC98-4C93-9041-4BBD6C496AFD")!,
-        "31": UUID(uuidString: "833DAA8D-0667-4F85-8F2C-9E0B1A80C9A9")!
-    ]
     @Published private(set) var isUnlocked = false
     @Published private(set) var needsMasterPasswordSetup: Bool
     @Published private(set) var isProcessing = false
@@ -30,6 +15,7 @@ final class SecureWorkspaceStore: ObservableObject {
     @Published private(set) var folders: [WorkspaceFolder] = []
     @Published private(set) var rootConnections: [SSHConnection] = []
     @Published private(set) var rootWebLinks: [WebLink] = []
+    @Published private(set) var rootTerminalCommands: [TerminalCommand] = []
     @Published private(set) var credentials: [Credential] = []
     @Published private(set) var selectedSSHConnection: SSHConnection?
     @Published private(set) var openSSHConnections: [SSHConnection] = []
@@ -51,6 +37,7 @@ final class SecureWorkspaceStore: ObservableObject {
     @Published var editingFolderCredentialID: UUID?
     @Published var isShowingSSHConnectionCreation = false
     @Published var isShowingWebLinkCreation = false
+    @Published var isShowingTerminalCommandCreation = false
     @Published var isShowingWebLinkEditor = false
     @Published var isShowingSSHConnectionEditor = false
     @Published var isShowingSSHConnectionDeletionConfirmation = false
@@ -70,6 +57,7 @@ final class SecureWorkspaceStore: ObservableObject {
     private var deletingFolderID: UUID?
     private var sshConnectionParentFolderID: UUID?
     private var webLinkParentFolderID: UUID?
+    private var terminalCommandParentFolderID: UUID?
     @Published private(set) var editingWebLink: WebLink?
     @Published private(set) var editingSSHConnection: SSHConnection?
     private var deletingSSHConnectionID: UUID?
@@ -103,6 +91,7 @@ final class SecureWorkspaceStore: ObservableObject {
                 folders = loadedWorkspace.folders
                 rootConnections = loadedWorkspace.rootConnections
                 rootWebLinks = loadedWorkspace.rootWebLinks
+                rootTerminalCommands = loadedWorkspace.rootTerminalCommands
                 credentials = loadedWorkspace.credentials
                 storageMode = .plaintext
                 needsMasterPasswordSetup = false
@@ -131,6 +120,7 @@ final class SecureWorkspaceStore: ObservableObject {
                     self.folders = []
                     self.rootConnections = []
                     self.rootWebLinks = []
+                    self.rootTerminalCommands = []
                     self.credentials = []
                     self.masterPassword = masterPassword
                     self.storageMode = .encrypted
@@ -159,6 +149,7 @@ final class SecureWorkspaceStore: ObservableObject {
                     self.folders = loadedWorkspace.folders
                     self.rootConnections = loadedWorkspace.rootConnections
                     self.rootWebLinks = loadedWorkspace.rootWebLinks
+                    self.rootTerminalCommands = loadedWorkspace.rootTerminalCommands
                     self.credentials = loadedWorkspace.credentials
                     self.masterPassword = masterPassword
                     self.storageMode = .encrypted
@@ -432,6 +423,37 @@ final class SecureWorkspaceStore: ObservableObject {
         guard !isProcessing else { return }
         webLinkParentFolderID = folder?.id
         isShowingWebLinkCreation = true
+    }
+
+    func showTerminalCommandCreation(in folder: WorkspaceFolder? = nil) {
+        guard !isProcessing else { return }
+        terminalCommandParentFolderID = folder?.id
+        isShowingTerminalCommandCreation = true
+    }
+
+    func createTerminalCommand(name: String, command: String) {
+        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedCommand = command.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedName.isEmpty, !trimmedCommand.isEmpty, !isProcessing else { return }
+
+        let terminalCommand = TerminalCommand(name: trimmedName, command: trimmedCommand)
+        if let terminalCommandParentFolderID {
+            guard insert(terminalCommand, into: &folders, below: terminalCommandParentFolderID) else {
+                errorMessage = "The destination folder is no longer available."
+                return
+            }
+        } else {
+            rootTerminalCommands.append(terminalCommand)
+        }
+        synchronizeWorkspace()
+        self.terminalCommandParentFolderID = nil
+        isShowingTerminalCommandCreation = false
+        save()
+    }
+
+    func cancelTerminalCommandCreation() {
+        terminalCommandParentFolderID = nil
+        isShowingTerminalCommandCreation = false
     }
 
     func createWebLink(name: String, urlString: String) {
@@ -765,21 +787,6 @@ final class SecureWorkspaceStore: ObservableObject {
         UserDefaults.standard.set(selectedTreeItemID?.uuidString, forKey: "GateTree.lastSelectedTreeItemID")
     }
 
-    func selectMyAIItem(_ key: String = "root") {
-        guard let id = Self.myAIItemIDs[key] else { return }
-        isShowingCredentials = false
-        selectedTreeItemID = id
-        selectedTreeItemIDs = [id]
-        UserDefaults.standard.set(id.uuidString, forKey: "GateTree.lastSelectedTreeItemID")
-    }
-
-    var isMyAISelected: Bool { selectedTreeItemIDs.contains { Self.myAIItemIDs.values.contains($0) } }
-
-    func isMyAIItemSelected(_ key: String) -> Bool {
-        guard let id = Self.myAIItemIDs[key] else { return false }
-        return selectedTreeItemIDs.contains(id)
-    }
-
     func isFolderExpanded(_ id: UUID) -> Bool {
         expandedFolderIDs.contains(id)
     }
@@ -794,7 +801,7 @@ final class SecureWorkspaceStore: ObservableObject {
     }
 
     var hasTreeSelection: Bool { !selectedTreeItemIDs.isEmpty }
-    var hasAssignableTreeSelection: Bool { hasTreeSelection && !isMyAISelected }
+    var hasAssignableTreeSelection: Bool { hasTreeSelection }
 
     func showCredentialAssignment() {
         guard hasAssignableTreeSelection, !isProcessing else { return }
@@ -890,14 +897,14 @@ final class SecureWorkspaceStore: ObservableObject {
     }
 
     func showFolderDeletionConfirmation(_ folder: WorkspaceFolder) {
-        guard folder.children.isEmpty, folder.connections.isEmpty, folder.webLinks.isEmpty, !isProcessing else { return }
+        guard folder.children.isEmpty, folder.connections.isEmpty, folder.webLinks.isEmpty, folder.terminalCommands.isEmpty, !isProcessing else { return }
         deletingFolderID = folder.id
         isShowingFolderDeletionConfirmation = true
     }
 
     func deleteConfirmedFolder() {
         guard let deletingFolderID, !isProcessing else { return }
-        guard let folder = findFolder(deletingFolderID, in: folders), folder.children.isEmpty, folder.connections.isEmpty, folder.webLinks.isEmpty else {
+        guard let folder = findFolder(deletingFolderID, in: folders), folder.children.isEmpty, folder.connections.isEmpty, folder.webLinks.isEmpty, folder.terminalCommands.isEmpty else {
             errorMessage = "Only empty folders can be deleted."
             return
         }
@@ -936,6 +943,7 @@ final class SecureWorkspaceStore: ObservableObject {
             folders: folders,
             rootConnections: rootConnections,
             rootWebLinks: rootWebLinks,
+            rootTerminalCommands: rootTerminalCommands,
             credentials: credentials
         )
     }
@@ -975,6 +983,17 @@ final class SecureWorkspaceStore: ObservableObject {
             if insert(webLink, into: &folders[index].children, below: parentID) {
                 return true
             }
+        }
+        return false
+    }
+
+    private func insert(_ terminalCommand: TerminalCommand, into folders: inout [WorkspaceFolder], below parentID: UUID) -> Bool {
+        for index in folders.indices {
+            if folders[index].id == parentID {
+                folders[index].terminalCommands.append(terminalCommand)
+                return true
+            }
+            if insert(terminalCommand, into: &folders[index].children, below: parentID) { return true }
         }
         return false
     }
@@ -1203,14 +1222,16 @@ struct WorkspaceFolder: Codable, Identifiable, Hashable, Sendable {
     var children: [WorkspaceFolder]
     var connections: [SSHConnection]
     var webLinks: [WebLink]
+    var terminalCommands: [TerminalCommand]
     var credentialID: UUID?
 
-    init(id: UUID = UUID(), name: String, children: [WorkspaceFolder] = [], connections: [SSHConnection] = [], webLinks: [WebLink] = [], credentialID: UUID? = nil) {
+    init(id: UUID = UUID(), name: String, children: [WorkspaceFolder] = [], connections: [SSHConnection] = [], webLinks: [WebLink] = [], terminalCommands: [TerminalCommand] = [], credentialID: UUID? = nil) {
         self.id = id
         self.name = name
         self.children = children
         self.connections = connections
         self.webLinks = webLinks
+        self.terminalCommands = terminalCommands
         self.credentialID = credentialID
     }
 
@@ -1218,7 +1239,7 @@ struct WorkspaceFolder: Codable, Identifiable, Hashable, Sendable {
         children.isEmpty ? nil : children
     }
 
-    enum CodingKeys: String, CodingKey { case id, name, children, connections, webLinks, credentialID }
+    enum CodingKeys: String, CodingKey { case id, name, children, connections, webLinks, terminalCommands, credentialID }
 
     init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
@@ -1227,6 +1248,7 @@ struct WorkspaceFolder: Codable, Identifiable, Hashable, Sendable {
         children = try values.decodeIfPresent([WorkspaceFolder].self, forKey: .children) ?? []
         connections = try values.decodeIfPresent([SSHConnection].self, forKey: .connections) ?? []
         webLinks = try values.decodeIfPresent([WebLink].self, forKey: .webLinks) ?? []
+        terminalCommands = try values.decodeIfPresent([TerminalCommand].self, forKey: .terminalCommands) ?? []
         credentialID = try values.decodeIfPresent(UUID.self, forKey: .credentialID)
     }
 }
@@ -1240,6 +1262,18 @@ struct WebLink: Codable, Identifiable, Hashable, Sendable {
         self.id = id
         self.name = name
         self.url = url
+    }
+}
+
+struct TerminalCommand: Codable, Identifiable, Hashable, Sendable {
+    let id: UUID
+    var name: String
+    var command: String
+
+    init(id: UUID = UUID(), name: String, command: String) {
+        self.id = id
+        self.name = name
+        self.command = command
     }
 }
 
@@ -1291,14 +1325,16 @@ private struct Workspace: Codable, Sendable {
     let folders: [WorkspaceFolder]
     let rootConnections: [SSHConnection]
     let rootWebLinks: [WebLink]
+    let rootTerminalCommands: [TerminalCommand]
     let credentials: [Credential]
 
-    init(formatVersion: Int = 1, createdAt: Date = .now, folders: [WorkspaceFolder] = [], rootConnections: [SSHConnection] = [], rootWebLinks: [WebLink] = [], credentials: [Credential] = []) {
+    init(formatVersion: Int = 1, createdAt: Date = .now, folders: [WorkspaceFolder] = [], rootConnections: [SSHConnection] = [], rootWebLinks: [WebLink] = [], rootTerminalCommands: [TerminalCommand] = [], credentials: [Credential] = []) {
         self.formatVersion = formatVersion
         self.createdAt = createdAt
         self.folders = folders
         self.rootConnections = rootConnections
         self.rootWebLinks = rootWebLinks
+        self.rootTerminalCommands = rootTerminalCommands
         self.credentials = credentials
     }
 
@@ -1309,6 +1345,7 @@ private struct Workspace: Codable, Sendable {
         folders = try values.decodeIfPresent([WorkspaceFolder].self, forKey: .folders) ?? []
         rootConnections = try values.decodeIfPresent([SSHConnection].self, forKey: .rootConnections) ?? []
         rootWebLinks = try values.decodeIfPresent([WebLink].self, forKey: .rootWebLinks) ?? []
+        rootTerminalCommands = try values.decodeIfPresent([TerminalCommand].self, forKey: .rootTerminalCommands) ?? []
         credentials = try values.decodeIfPresent([Credential].self, forKey: .credentials) ?? []
     }
 }
