@@ -13,16 +13,22 @@ spreading hosts, passwords and monitoring URLs across separate tools.
 ## Features
 
 - **Connection tree** with folders, drag and drop, rename, safe deletion and
-  persistent selection / expansion state.
+  persistent selection / expansion state. Items can also be moved to Trash.
+- **Tags and multi-word search** across folders, SSH connections, web
+  bookmarks and terminal commands.
 - **Embedded SSH sessions** using the system OpenSSH client and a native
   terminal view, with several open connections represented as tabs.
+- **Terminal commands** for repeatable local operational tasks.
 - **Credential inheritance** from folders to child folders and SSH
   connections, with multi-select assignment.
 - **macOS Keychain integration** — only the credential name, username and an
   identifier are held in the workspace; passwords stay in Keychain.
-- **Web bookmarks** for operational tools such as API, Grafana, Prometheus,
-  Thanos and Shuttleproxy. They open in Chrome so enterprise SSO and FIDO
-  authentication use the existing browser profile.
+- **Web bookmarks and Quick Access** for operational tools such as API,
+  Grafana, Prometheus, Thanos and Shuttleproxy. Bookmarks can open in Chrome;
+  GateTree can keep track of the corresponding Chrome tab and bring it to the
+  foreground.
+- **Incident triage** that passes supplied alert context to a locally installed
+  Codex CLI in read-only mode and displays the result in an app tab.
 - **Workspace protection** with plaintext or encrypted workspace modes,
   master-password setup/change, decryption and file export.
 - **Native macOS interface** with a resizable sidebar, connection details,
@@ -104,7 +110,6 @@ keychain and creates a temporary `GateTree-notary` profile from the API key.
 ## Roadmap
 
 - RDP connections.
-- Search and filtering.
 - Signed public preview builds and screenshots.
 - Import assistants for common remote-manager exports, implemented from their
   documented formats rather than copied application code.
@@ -118,10 +123,3 @@ keychain and creates a temporary `GateTree-notary` profile from the API key.
 - [SwiftTerm](https://github.com/migueldeicaza/SwiftTerm) — terminal emulator
   used for embedded SSH sessions.
 - Apple SwiftUI, AppKit, Security / Keychain Services and CryptoKit.
-
-## Clean-room status
-
-GateTree does not contain mRemoteNG or mRemoteNXT source code, assets or
-configuration files. They are separate projects; any future import support
-will be implemented independently against public or user-supplied file
-formats.
