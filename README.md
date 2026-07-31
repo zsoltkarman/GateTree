@@ -111,8 +111,6 @@ keychain and creates a temporary `GateTree-notary` profile from the API key.
 
 - RDP connections.
 - Signed public preview builds and screenshots.
-- Import assistants for common remote-manager exports, implemented from their
-  documented formats rather than copied application code.
 
 ## License
 
