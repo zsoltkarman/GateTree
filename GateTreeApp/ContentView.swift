@@ -5,12 +5,17 @@ import SwiftUI
 import UniformTypeIdentifiers
 import WebKit
 
+private func treeItemProvider(_ payload: String) -> NSItemProvider {
+    NSItemProvider(object: payload as NSString)
+}
+
 struct ContentView: View {
     @EnvironmentObject private var workspaceStore: SecureWorkspaceStore
     @State private var searchText = ""
     @State private var sidebarVisible = true
     @State private var sidebarWidth: CGFloat?
     @State private var sidebarDragStartWidth: CGFloat?
+    @State private var isSearchHelpPresented = false
 
     var body: some View {
         Group {
@@ -25,6 +30,17 @@ struct ContentView: View {
                                 HStack(spacing: 8) {
                                     TextField("Search connections", text: $searchText)
                                         .textFieldStyle(.roundedBorder)
+
+                                    Button {
+                                        isSearchHelpPresented.toggle()
+                                    } label: {
+                                        Image(systemName: "questionmark.circle")
+                                    }
+                                    .buttonStyle(.borderless)
+                                    .help("Search help")
+                                    .popover(isPresented: $isSearchHelpPresented, arrowEdge: .top) {
+                                        SearchHelpView()
+                                    }
 
                                     sidebarToggle
                                 }
@@ -54,6 +70,8 @@ struct ContentView: View {
                         }
 
                         VStack(alignment: .leading, spacing: 0) {
+                            QuickAccessBar()
+
                             if !sidebarVisible {
                                 sidebarToggle
                                     .padding(12)
@@ -61,10 +79,12 @@ struct ContentView: View {
 
                             if workspaceStore.isShowingCredentials {
                                 CredentialsManagerView()
-                            } else if !workspaceStore.openSSHConnections.isEmpty || !workspaceStore.openExternalWebLinks.isEmpty {
+                            } else if workspaceStore.isShowingCodexResult || !workspaceStore.openSSHConnections.isEmpty || !workspaceStore.openExternalWebLinks.isEmpty {
                                 VStack(spacing: 0) {
                                     SessionTabBar()
-                                    if let webLink = workspaceStore.activeExternalWebLink {
+                                    if workspaceStore.isShowingCodexResult {
+                                        CodexResultPane()
+                                    } else if let webLink = workspaceStore.activeExternalWebLink {
                                         ChromeLinkPane(webLink: webLink)
                                     } else {
                                         ZStack {
@@ -103,6 +123,10 @@ struct ContentView: View {
             Button("OK", role: .cancel) { workspaceStore.errorMessage = nil }
         } message: {
             Text(workspaceStore.errorMessage ?? "")
+        }
+        .sheet(isPresented: $workspaceStore.isShowingTerminalCommandInput) {
+            IncidentPromptView()
+                .environmentObject(workspaceStore)
         }
         .sheet(isPresented: $workspaceStore.isShowingFolderCreation) {
             FolderNameView()
@@ -208,6 +232,9 @@ struct ContentView: View {
         } message: {
             Text("The saved password will also be removed from macOS Keychain.")
         }
+        .sheet(isPresented: $workspaceStore.isShowingHelp) {
+            GateTreeAboutView()
+        }
     }
 
     private var sidebarToggle: some View {
@@ -254,6 +281,73 @@ struct ContentView: View {
     }
 }
 
+private struct SearchHelpView: View {
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Label("Search Help", systemImage: "magnifyingglass")
+                .font(.headline)
+
+            Text("Use one or more words. Every word must match a name, address, or tag; matching ignores capitalization.")
+                .fixedSize(horizontal: false, vertical: true)
+
+            VStack(alignment: .leading, spacing: 5) {
+                Text("Examples")
+                    .font(.subheadline.weight(.semibold))
+                Text("• sauron fra api — all FRA Sauron APIs")
+                Text("• sauron iad iad1 thanos — the IAD1 Thanos link")
+                Text("• ssh giu icprod fra kafka — FRA Kafka servers")
+                Text("• ssh ohai cernfr cache — CERN FR cache servers")
+            }
+            .font(.callout)
+
+            Text("Tags include site, region, instance, and service or server role.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+
+        }
+        .padding(16)
+        .frame(width: 340, alignment: .leading)
+    }
+}
+
+private struct GateTreeAboutView: View {
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Label("About GateTree", systemImage: "tree")
+                .font(.title2.weight(.semibold))
+
+            Text("GateTree is a local macOS workspace for organizing SSH servers, credentials, commands, and operational web links in one connection tree.")
+                .fixedSize(horizontal: false, vertical: true)
+
+            Text("Built with Swift and SwiftUI for macOS.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Features").font(.headline)
+                Text("• Folder-based SSH and web bookmark management")
+                Text("• Native SSH session tabs and macOS Keychain credentials")
+                Text("• Tags and multi-word search for sites, services, regions, and instances")
+                Text("• Chrome tab tracking for SSO-protected operational links")
+            }
+            .font(.callout)
+
+            Text("Created by Zsolt Karman")
+                .font(.headline)
+
+            HStack {
+                Spacer()
+                Button("Done") { dismiss() }
+                    .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(24)
+        .frame(width: 470, alignment: .leading)
+    }
+}
+
 private struct SessionTabBar: View {
     @EnvironmentObject private var workspaceStore: SecureWorkspaceStore
 
@@ -263,6 +357,7 @@ private struct SessionTabBar: View {
                 ForEach(workspaceStore.openSSHConnections) { connection in
                     HStack(spacing: 5) {
                         Button {
+                            workspaceStore.isShowingCodexResult = false
                             workspaceStore.selectOpenSSHConnection(connection)
                         } label: {
                             Label(connection.name, systemImage: "terminal")
@@ -290,6 +385,7 @@ private struct SessionTabBar: View {
                 ForEach(workspaceStore.openExternalWebLinks) { webLink in
                     HStack(spacing: 5) {
                         Button {
+                            workspaceStore.isShowingCodexResult = false
                             workspaceStore.selectOpenExternalWebLink(webLink)
                         } label: {
                             Label(webLink.name, systemImage: "globe")
@@ -312,6 +408,25 @@ private struct SessionTabBar: View {
                             ? Color.accentColor.opacity(0.25)
                             : Color.secondary.opacity(0.10)
                     )
+                    .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
+                }
+                if workspaceStore.isCodexRunning || !workspaceStore.codexResult.isEmpty {
+                    HStack(spacing: 5) {
+                        Button { workspaceStore.isShowingCodexResult = true } label: {
+                            Label("Incident triage", systemImage: "sparkles").lineLimit(1)
+                        }
+                        .buttonStyle(.plain)
+                        if !workspaceStore.isCodexRunning {
+                            Button { workspaceStore.closeCodexResult() } label: {
+                                Image(systemName: "xmark").font(.system(size: 9, weight: .semibold))
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .font(.system(size: 12))
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 6)
+                    .background(Color.accentColor.opacity(0.25))
                     .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
                 }
             }
@@ -354,7 +469,7 @@ private struct ChromeLinkPane: View {
             VStack(alignment: .leading, spacing: 18) {
                 Label("Opened in Google Chrome", systemImage: "checkmark.circle.fill")
                     .foregroundStyle(.green)
-                Text("GateTree keeps this bookmark selected while Chrome handles the Oracle SSO and FIDO session.")
+                Text("GateTree keeps this bookmark selected while Chrome handles the sign-in session.")
                     .foregroundStyle(.secondary)
 
                 Button {
@@ -422,7 +537,15 @@ private struct HostInspector: View {
     @EnvironmentObject private var workspaceStore: SecureWorkspaceStore
 
     var body: some View {
-        Group {
+        VStack(spacing: 0) {
+            Label("Details", systemImage: "info.circle")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(8)
+            Divider()
+
+            Group {
             if let connection = workspaceStore.selectedConnectionForInspector {
                 VStack(alignment: .leading, spacing: 3) {
                     Label(connection.name, systemImage: "server.rack")
@@ -430,6 +553,7 @@ private struct HostInspector: View {
                     InspectorRow(label: "Host", value: "\(connection.host):\(connection.port)")
                     InspectorRow(label: "User", value: workspaceStore.resolvedUsername(for: connection))
                     InspectorRow(label: "Credential", value: workspaceStore.credentialSummary(for: connection))
+                    InspectorTags(tags: connection.tags)
                 }
                 .padding(8)
             } else if let webLink = workspaceStore.selectedWebLinkForInspector {
@@ -438,6 +562,7 @@ private struct HostInspector: View {
                         .font(.system(size: 12, weight: .medium))
                     InspectorRow(label: "Type", value: "Web bookmark")
                     InspectorRow(label: "URL", value: webLink.url)
+                    InspectorTags(tags: webLink.tags)
                 }
                 .padding(8)
             } else if let terminalCommand = workspaceStore.selectedTerminalCommandForInspector {
@@ -447,17 +572,43 @@ private struct HostInspector: View {
                     InspectorRow(label: "Type", value: "Terminal connection")
                     InspectorRow(label: "Command", value: terminalCommand.command)
                     InspectorRow(label: "Action", value: "Double-click opens a new Terminal window")
+                    InspectorTags(tags: terminalCommand.tags)
+                }
+                .padding(8)
+            } else if let folder = workspaceStore.selectedFolderForInspector {
+                VStack(alignment: .leading, spacing: 3) {
+                    Label(folder.name, systemImage: "folder.fill")
+                        .font(.system(size: 12, weight: .medium))
+                    InspectorRow(label: "Type", value: "Folder")
+                    InspectorTags(tags: folder.tags)
                 }
                 .padding(8)
             } else {
                 Text("Select a connection to see its details.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                    .padding(8)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(8)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
+            }
+            .frame(minHeight: 106, alignment: .topLeading)
         }
-        .frame(minHeight: 106, alignment: .topLeading)
+    }
+}
+
+private struct InspectorTags: View {
+    let tags: [String]
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 5) {
+            Text("Tags")
+                .foregroundStyle(.secondary)
+                .frame(width: 62, alignment: .leading)
+            Text(tags.isEmpty ? "—" : tags.joined(separator: ", "))
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .font(.system(size: 10))
     }
 }
 
@@ -480,29 +631,100 @@ private struct InspectorRow: View {
 }
 
 private func matchesSearch(_ values: [String], query: String) -> Bool {
-    let needle = query.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !needle.isEmpty else { return true }
-    return values.contains { $0.localizedCaseInsensitiveContains(needle) }
+    let terms = query
+        .split(whereSeparator: { $0.isWhitespace })
+        .map(String.init)
+    guard !terms.isEmpty else { return true }
+
+    return terms.allSatisfy { term in
+        values.contains { $0.localizedCaseInsensitiveContains(term) }
+    }
 }
 
 private func sshMatchesSearch(_ connection: SSHConnection, query: String) -> Bool {
-    matchesSearch([connection.name, connection.host, connection.username, String(connection.port)], query: query)
+    matchesSearch([connection.name, connection.host, connection.username, String(connection.port)] + connection.tags, query: query)
 }
 
 private func webLinkMatchesSearch(_ webLink: WebLink, query: String) -> Bool {
-    matchesSearch([webLink.name, webLink.url], query: query)
+    matchesSearch([webLink.name, webLink.url] + webLink.tags, query: query)
 }
 
 private func terminalCommandMatchesSearch(_ terminalCommand: TerminalCommand, query: String) -> Bool {
-    matchesSearch([terminalCommand.name, terminalCommand.command], query: query)
+    matchesSearch([terminalCommand.name, terminalCommand.command] + terminalCommand.tags, query: query)
 }
 
 private func folderMatchesSearch(_ folder: WorkspaceFolder, query: String) -> Bool {
-    matchesSearch([folder.name], query: query) ||
+    matchesSearch([folder.name] + folder.tags, query: query) ||
     folder.connections.contains { sshMatchesSearch($0, query: query) } ||
     folder.webLinks.contains { webLinkMatchesSearch($0, query: query) } ||
     folder.terminalCommands.contains { terminalCommandMatchesSearch($0, query: query) } ||
     folder.children.contains { folderMatchesSearch($0, query: query) }
+}
+
+private enum TreeNavigationItemKind {
+    case folder
+    case ssh
+    case web
+    case terminal
+}
+
+private struct TreeNavigationItem {
+    let id: UUID
+    let kind: TreeNavigationItemKind
+    let parentFolderID: UUID?
+    let hasChildren: Bool
+}
+
+private func treeNavigationItems(
+    folders: [WorkspaceFolder],
+    rootConnections: [SSHConnection],
+    rootWebLinks: [WebLink],
+    rootTerminalCommands: [TerminalCommand],
+    expandedFolderIDs: Set<UUID>,
+    searchText: String
+) -> [TreeNavigationItem] {
+    let isFiltering = !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+
+    func matchingConnections(_ folder: WorkspaceFolder) -> [SSHConnection] {
+        folder.connections.filter { !isFiltering || sshMatchesSearch($0, query: searchText) }
+    }
+
+    func matchingWebLinks(_ folder: WorkspaceFolder) -> [WebLink] {
+        folder.webLinks.filter { !isFiltering || webLinkMatchesSearch($0, query: searchText) }
+    }
+
+    func matchingTerminalCommands(_ folder: WorkspaceFolder) -> [TerminalCommand] {
+        folder.terminalCommands.filter { !isFiltering || terminalCommandMatchesSearch($0, query: searchText) }
+    }
+
+    func matchingChildren(_ folder: WorkspaceFolder) -> [WorkspaceFolder] {
+        folder.children.filter { !isFiltering || folderMatchesSearch($0, query: searchText) }
+    }
+
+    func appendFolders(_ source: [WorkspaceFolder], parentFolderID: UUID?, into items: inout [TreeNavigationItem]) {
+        for folder in source where !isFiltering || folderMatchesSearch(folder, query: searchText) {
+            let connections = matchingConnections(folder)
+            let webLinks = matchingWebLinks(folder)
+            let terminalCommands = matchingTerminalCommands(folder)
+            let children = matchingChildren(folder)
+            let hasChildren = !connections.isEmpty || !webLinks.isEmpty || !terminalCommands.isEmpty || !children.isEmpty
+            items.append(TreeNavigationItem(id: folder.id, kind: .folder, parentFolderID: parentFolderID, hasChildren: hasChildren))
+
+            if isFiltering || expandedFolderIDs.contains(folder.id) {
+                items.append(contentsOf: connections.map { TreeNavigationItem(id: $0.id, kind: .ssh, parentFolderID: folder.id, hasChildren: false) })
+                items.append(contentsOf: webLinks.map { TreeNavigationItem(id: $0.id, kind: .web, parentFolderID: folder.id, hasChildren: false) })
+                items.append(contentsOf: terminalCommands.map { TreeNavigationItem(id: $0.id, kind: .terminal, parentFolderID: folder.id, hasChildren: false) })
+                appendFolders(children, parentFolderID: folder.id, into: &items)
+            }
+        }
+    }
+
+    var items: [TreeNavigationItem] = []
+    appendFolders(folders, parentFolderID: nil, into: &items)
+    items.append(contentsOf: rootConnections.filter { !isFiltering || sshMatchesSearch($0, query: searchText) }.map { TreeNavigationItem(id: $0.id, kind: .ssh, parentFolderID: nil, hasChildren: false) })
+    items.append(contentsOf: rootWebLinks.filter { !isFiltering || webLinkMatchesSearch($0, query: searchText) }.map { TreeNavigationItem(id: $0.id, kind: .web, parentFolderID: nil, hasChildren: false) })
+    items.append(contentsOf: rootTerminalCommands.filter { !isFiltering || terminalCommandMatchesSearch($0, query: searchText) }.map { TreeNavigationItem(id: $0.id, kind: .terminal, parentFolderID: nil, hasChildren: false) })
+    return items
 }
 
 private struct FolderList: View {
@@ -515,6 +737,16 @@ private struct FolderList: View {
         workspaceStore.rootConnections.contains { sshMatchesSearch($0, query: searchText) } ||
         workspaceStore.rootWebLinks.contains { webLinkMatchesSearch($0, query: searchText) } ||
         workspaceStore.rootTerminalCommands.contains { terminalCommandMatchesSearch($0, query: searchText) }
+    }
+    private var navigationItems: [TreeNavigationItem] {
+        treeNavigationItems(
+            folders: workspaceStore.folders,
+            rootConnections: workspaceStore.rootConnections,
+            rootWebLinks: workspaceStore.rootWebLinks,
+            rootTerminalCommands: workspaceStore.rootTerminalCommands,
+            expandedFolderIDs: workspaceStore.expandedFolderIDs,
+            searchText: searchText
+        )
     }
 
     var body: some View {
@@ -555,6 +787,7 @@ private struct FolderList: View {
                             workspaceStore.showSSHConnectionDeletionConfirmation(connection)
                         }
                     }
+                    .onDrag { treeItemProvider("ssh:\(connection.id.uuidString)") }
             }
 
             ForEach(workspaceStore.rootWebLinks.filter { !isFiltering || webLinkMatchesSearch($0, query: searchText) }) { webLink in
@@ -565,6 +798,7 @@ private struct FolderList: View {
                     .onTapGesture { workspaceStore.selectTreeItem(webLink.id) }
                     .onTapGesture(count: 2) { workspaceStore.selectWebLink(webLink) }
                     .contextMenu { webLinkMenu(webLink) }
+                    .onDrag { treeItemProvider("web:\(webLink.id.uuidString)") }
             }
 
             ForEach(workspaceStore.rootTerminalCommands.filter { !isFiltering || terminalCommandMatchesSearch($0, query: searchText) }) { terminalCommand in
@@ -573,10 +807,13 @@ private struct FolderList: View {
                     .listRowInsets(EdgeInsets(top: 1, leading: 8, bottom: 1, trailing: 6))
                     .listRowBackground(treeSelectionBackground(for: terminalCommand.id))
                     .onTapGesture { workspaceStore.selectTreeItem(terminalCommand.id) }
-                    .onTapGesture(count: 2) { TerminalCommandLauncher.openInTerminal(terminalCommand.command) }
+                    .onTapGesture(count: 2) { workspaceStore.launchTerminalCommand(terminalCommand) }
                     .contextMenu {
                         Button("Edit…") { workspaceStore.showTerminalCommandEditor(terminalCommand) }
+                        Divider()
+                        Button("Move to Trash", role: .destructive) { workspaceStore.moveTerminalCommandToTrash(terminalCommand.id) }
                     }
+                    .onDrag { treeItemProvider("terminal:\(terminalCommand.id.uuidString)") }
             }
 
             Color.clear
@@ -586,6 +823,8 @@ private struct FolderList: View {
         .listStyle(.plain)
         .environment(\.defaultMinListRowHeight, 18)
         .font(.system(size: 12, weight: .regular))
+        .focusable()
+        .onMoveCommand(perform: handleMoveCommand)
         .contextMenu {
             Menu("New Connection") {
                 Button("Server (SSH)") { workspaceStore.showSSHConnectionCreation() }
@@ -602,9 +841,91 @@ private struct FolderList: View {
         workspaceStore.selectedTreeItemIDs.contains(id) ? Color.accentColor.opacity(0.72) : .clear
     }
 
+    private func handleMoveCommand(_ direction: MoveCommandDirection) {
+        guard !navigationItems.isEmpty else { return }
+
+        let selectedIndex = workspaceStore.selectedTreeItemID.flatMap { selectedID in
+            navigationItems.firstIndex { $0.id == selectedID }
+        }
+
+        switch direction {
+        case .up:
+            let index = max(0, (selectedIndex ?? 1) - 1)
+            workspaceStore.selectOnlyTreeItem(navigationItems[index].id)
+        case .down:
+            let index = min(navigationItems.count - 1, (selectedIndex ?? -1) + 1)
+            workspaceStore.selectOnlyTreeItem(navigationItems[index].id)
+        case .right:
+            guard !isFiltering, let selectedIndex else { return }
+            let item = navigationItems[selectedIndex]
+            guard item.kind == .folder, item.hasChildren else { return }
+            if !workspaceStore.isFolderExpanded(item.id) {
+                workspaceStore.toggleFolderExpanded(item.id)
+            } else if let child = navigationItems.dropFirst(selectedIndex + 1).first(where: { $0.parentFolderID == item.id }) {
+                workspaceStore.selectOnlyTreeItem(child.id)
+            }
+        case .left:
+            guard !isFiltering, let selectedIndex else { return }
+            let item = navigationItems[selectedIndex]
+            if item.kind == .folder, workspaceStore.isFolderExpanded(item.id) {
+                workspaceStore.toggleFolderExpanded(item.id)
+            } else if let parentFolderID = item.parentFolderID {
+                workspaceStore.selectOnlyTreeItem(parentFolderID)
+            }
+        default:
+            break
+        }
+    }
+
     @ViewBuilder
     private func webLinkMenu(_ webLink: WebLink) -> some View {
         Button("Edit…") { workspaceStore.showWebLinkEditor(webLink) }
+        Button(workspaceStore.isQuickAccess(webLink) ? "Remove from Quick Access" : "Add to Quick Access") {
+            workspaceStore.toggleQuickAccess(webLink)
+        }
+        Divider()
+        Button("Move to Trash", role: .destructive) { workspaceStore.moveWebLinkToTrash(webLink.id) }
+    }
+}
+
+private struct QuickAccessBar: View {
+    @EnvironmentObject private var workspaceStore: SecureWorkspaceStore
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "star.fill")
+                .foregroundStyle(.yellow)
+                .font(.system(size: 11))
+
+            if workspaceStore.quickAccessWebLinks.isEmpty {
+                Text("Quick Access - right-click a URL and choose Add to Quick Access")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            } else {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 4) {
+                        ForEach(workspaceStore.quickAccessWebLinks) { webLink in
+                            Button {
+                                workspaceStore.selectWebLink(webLink)
+                            } label: {
+                                Label(webLink.name, systemImage: "globe")
+                                    .lineLimit(1)
+                                    .font(.system(size: 11, weight: .medium))
+                                    .padding(.horizontal, 7)
+                                    .padding(.vertical, 5)
+                            }
+                            .buttonStyle(.bordered)
+                            .help(webLink.url)
+                        }
+                    }
+                }
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 7)
+        .background(.bar)
+        Divider()
     }
 }
 
@@ -763,6 +1084,7 @@ private struct CredentialEditorForm: View {
                     workspaceStore.updateCredential(name: name, username: username, newPassword: password)
                 }
                 .buttonStyle(.borderedProminent)
+                .keyboardShortcut(.defaultAction)
                 .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || username.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
         }
@@ -815,6 +1137,73 @@ private struct TerminalCommandLabel: View {
     var body: some View {
         Label(name, systemImage: "terminal")
             .foregroundStyle(.purple)
+    }
+}
+
+private struct IncidentPromptView: View {
+    @EnvironmentObject private var workspaceStore: SecureWorkspaceStore
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Investigate incident")
+                .font(.title2.weight(.semibold))
+            Text("Paste the alert, Slack message, labels, and runbook context. GateTree will pass it to Codex.")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+
+            TextEditor(text: $workspaceStore.terminalCommandInput)
+                .font(.system(.body, design: .monospaced))
+                .scrollContentBackground(.hidden)
+                .padding(8)
+                .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 8))
+                .frame(minHeight: 280)
+
+            HStack {
+                Button("Cancel") { workspaceStore.cancelTerminalCommandInput() }
+                Spacer()
+                Button("Start investigation") { workspaceStore.runTerminalCommandWithInput() }
+                    .buttonStyle(.borderedProminent)
+                    .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(24)
+        .frame(width: 720, height: 470)
+    }
+}
+
+private struct CodexResultPane: View {
+    @EnvironmentObject private var workspaceStore: SecureWorkspaceStore
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Label("Incident triage", systemImage: "sparkles")
+                    .font(.headline)
+                Spacer()
+                Text(workspaceStore.codexStatus)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                if workspaceStore.isCodexRunning {
+                    ProgressView().controlSize(.small)
+                    Button("Cancel") { workspaceStore.cancelCodexRun() }
+                } else {
+                    Button(action: workspaceStore.closeCodexResult) {
+                        Image(systemName: "xmark")
+                    }
+                    .buttonStyle(.borderless)
+                }
+            }
+            .padding(14)
+            Divider()
+
+            ScrollView {
+                Text(workspaceStore.codexResult.isEmpty ? "Waiting for Codex output…" : workspaceStore.codexResult)
+                    .font(.system(.body, design: .monospaced))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .textSelection(.enabled)
+                    .padding(18)
+            }
+        }
     }
 }
 
@@ -886,27 +1275,38 @@ private struct FolderTreeRow: View {
                     } label: {
                         Image(systemName: isExpanded ? "minus.square" : "plus.square")
                             .font(.system(size: 11))
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(isFiltering ? .tertiary : .secondary)
                             .frame(width: 12)
                     }
                     .buttonStyle(.plain)
+                    .disabled(isFiltering)
+                    .help(isFiltering ? "Clear search to change the folder expansion state." : "Expand or collapse folder")
                 } else {
                     Color.clear.frame(width: 12, height: 1)
                 }
 
-                Image("GateTreeFolder")
-                    .resizable()
-                    .scaledToFit()
-                    .frame(width: 14, height: 14)
+                if folder.name == "Trash" && depth == 0 {
+                    Image(systemName: "trash")
+                        .foregroundStyle(.secondary)
+                        .frame(width: 14, height: 14)
+                } else {
+                    Image("GateTreeFolder")
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: 14, height: 14)
+                }
                 Text(folder.name)
             }
-            .frame(height: 18)
+            .frame(maxWidth: .infinity, minHeight: 18, maxHeight: 18, alignment: .leading)
+            .contentShape(Rectangle())
             .font(.system(size: 12, weight: .regular))
             .listRowInsets(EdgeInsets(top: 1, leading: 8, bottom: 1, trailing: 6))
             .listRowBackground(workspaceStore.selectedTreeItemIDs.contains(folder.id) ? Color.accentColor.opacity(0.72) : .clear)
             .onTapGesture {
                 workspaceStore.selectTreeItem(folder.id)
-                workspaceStore.toggleFolderExpanded(folder.id)
+                if !isFiltering {
+                    workspaceStore.toggleFolderExpanded(folder.id)
+                }
             }
             .contextMenu {
                 Button("Edit…") {
@@ -928,7 +1328,7 @@ private struct FolderTreeRow: View {
                 .disabled(!folder.children.isEmpty || !folder.connections.isEmpty || !folder.webLinks.isEmpty || !folder.terminalCommands.isEmpty)
             }
             .onDrag {
-                NSItemProvider(object: folder.id.uuidString as NSString)
+                treeItemProvider("folder:\(folder.id.uuidString)")
             }
             .onDrop(of: [.text], delegate: FolderDropDelegate(targetFolderID: folder.id, store: workspaceStore))
 
@@ -950,6 +1350,9 @@ private struct FolderTreeRow: View {
                             workspaceStore.selectSSHConnection(connection)
                         }
                         .contextMenu { connectionMenu(connection) }
+                        .onDrag {
+                            treeItemProvider("ssh:\(connection.id.uuidString)")
+                        }
                 }
                 ForEach(matchingWebLinks) { webLink in
                     HStack(spacing: 6) {
@@ -965,7 +1368,13 @@ private struct FolderTreeRow: View {
                     .onTapGesture(count: 2) { workspaceStore.selectWebLink(webLink) }
                     .contextMenu {
                         Button("Edit…") { workspaceStore.showWebLinkEditor(webLink) }
+                        Button(workspaceStore.isQuickAccess(webLink) ? "Remove from Quick Access" : "Add to Quick Access") {
+                            workspaceStore.toggleQuickAccess(webLink)
+                        }
+                        Divider()
+                        Button("Move to Trash", role: .destructive) { workspaceStore.moveWebLinkToTrash(webLink.id) }
                     }
+                    .onDrag { treeItemProvider("web:\(webLink.id.uuidString)") }
                 }
                 ForEach(matchingTerminalCommands) { terminalCommand in
                     HStack(spacing: 6) {
@@ -978,10 +1387,13 @@ private struct FolderTreeRow: View {
                     .listRowInsets(EdgeInsets(top: 1, leading: 8, bottom: 1, trailing: 6))
                     .listRowBackground(workspaceStore.selectedTreeItemIDs.contains(terminalCommand.id) ? Color.accentColor.opacity(0.72) : .clear)
                     .onTapGesture { workspaceStore.selectTreeItem(terminalCommand.id) }
-                    .onTapGesture(count: 2) { TerminalCommandLauncher.openInTerminal(terminalCommand.command) }
+                    .onTapGesture(count: 2) { workspaceStore.launchTerminalCommand(terminalCommand) }
                     .contextMenu {
                         Button("Edit…") { workspaceStore.showTerminalCommandEditor(terminalCommand) }
+                        Divider()
+                        Button("Move to Trash", role: .destructive) { workspaceStore.moveTerminalCommandToTrash(terminalCommand.id) }
                     }
+                    .onDrag { treeItemProvider("terminal:\(terminalCommand.id.uuidString)") }
                 }
                 ForEach(matchingChildren) { child in
                     FolderTreeRow(folder: child, depth: depth + 1, searchText: searchText)
@@ -996,9 +1408,7 @@ private struct FolderTreeRow: View {
             workspaceStore.showSSHConnectionEditor(connection)
         }
         Divider()
-        Button("Delete…", role: .destructive) {
-            workspaceStore.showSSHConnectionDeletionConfirmation(connection)
-        }
+        Button("Move to Trash", role: .destructive) { workspaceStore.moveSSHConnectionToTrash(connection.id) }
     }
 }
 
@@ -1035,24 +1445,52 @@ private struct FolderDropDelegate: DropDelegate {
         !store.isProcessing && info.hasItemsConforming(to: [.text])
     }
 
+    func dropUpdated(info: DropInfo) -> DropProposal? {
+        DropProposal(operation: .move)
+    }
+
     func performDrop(info: DropInfo) -> Bool {
         guard let provider = info.itemProviders(for: [.text]).first else { return false }
 
         provider.loadObject(ofClass: NSString.self) { value, _ in
-            guard let identifier = value as? String,
-                  let folderID = UUID(uuidString: identifier) else { return }
+            guard let payload = value as? String else { return }
 
             DispatchQueue.main.async {
-                store.moveFolder(id: folderID, into: targetFolderID)
+                let components = payload.split(separator: ":", maxSplits: 1).map(String.init)
+                guard components.count == 2, let id = UUID(uuidString: components[1]) else { return }
+
+                switch components[0] {
+                case "folder":
+                    store.moveFolder(id: id, into: targetFolderID)
+                case "ssh":
+                    store.moveSSHConnection(id: id, into: targetFolderID)
+                case "web":
+                    store.moveWebLink(id: id, into: targetFolderID)
+                case "terminal":
+                    store.moveTerminalCommand(id: id, into: targetFolderID)
+                default:
+                    break
+                }
             }
         }
         return true
     }
 }
 
+private struct TagTextField: View {
+    @Binding var tags: String
+
+    var body: some View {
+        TextField("Tags (comma separated)", text: $tags)
+            .textFieldStyle(.roundedBorder)
+            .help("Use commas to separate tags, for example: prod, iad, sauron")
+    }
+}
+
 private struct FolderNameView: View {
     @EnvironmentObject private var workspaceStore: SecureWorkspaceStore
     @State private var name = ""
+    @State private var tags = ""
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -1062,6 +1500,7 @@ private struct FolderNameView: View {
             TextField("Folder name", text: $name)
                 .textFieldStyle(.roundedBorder)
                 .onSubmit(createFolder)
+            TagTextField(tags: $tags)
 
             HStack {
                 Button("Cancel") {
@@ -1078,7 +1517,7 @@ private struct FolderNameView: View {
     }
 
     private func createFolder() {
-        workspaceStore.createFolder(named: name)
+        workspaceStore.createFolder(named: name, tags: tags.split(separator: ",").map(String.init))
     }
 }
 
@@ -1092,6 +1531,7 @@ private struct FolderEditorView: View {
 
             TextField("Folder name", text: $workspaceStore.editingFolderName)
                 .textFieldStyle(.roundedBorder)
+            TagTextField(tags: $workspaceStore.editingFolderTags)
             Picker("Credential", selection: $workspaceStore.editingFolderCredentialID) {
                 Text("Inherit from parent").tag(UUID?.none)
                 ForEach(workspaceStore.credentials) { credential in
@@ -1107,6 +1547,7 @@ private struct FolderEditorView: View {
                 Spacer()
                 Button("Save") { workspaceStore.renameEditedFolder() }
                     .buttonStyle(.borderedProminent)
+                    .keyboardShortcut(.defaultAction)
                     .disabled(workspaceStore.editingFolderName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
         }
@@ -1122,6 +1563,7 @@ private struct SSHConnectionForm: View {
     @State private var username = ""
     @State private var port = "22"
     @State private var credentialID: UUID?
+    @State private var tags = ""
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -1141,6 +1583,7 @@ private struct SSHConnectionForm: View {
                     Text("\(credential.name) (\(credential.username))").tag(Optional(credential.id))
                 }
             }
+            TagTextField(tags: $tags)
             if let connection = workspaceStore.editingSSHConnection {
                 Text(workspaceStore.credentialSummary(for: connection))
                     .font(.caption)
@@ -1155,7 +1598,7 @@ private struct SSHConnectionForm: View {
                         return
                     }
                     workspaceStore.setNewConnectionCredential(credentialID)
-                    workspaceStore.createSSHConnection(name: name, host: host, username: username, port: portNumber)
+                    workspaceStore.createSSHConnection(name: name, host: host, username: username, port: portNumber, tags: tags.split(separator: ",").map(String.init))
                 }
                 .buttonStyle(.borderedProminent)
                 .disabled(host.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
@@ -1169,17 +1612,19 @@ private struct SSHConnectionForm: View {
 private struct WebLinkForm: View {
     @EnvironmentObject private var workspaceStore: SecureWorkspaceStore
     @State private var name = ""
-    @State private var url = "https://"
+    @State private var url = ""
+    @State private var tags = ""
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text("New Web Link").font(.title2.weight(.semibold))
             TextField("Name (optional)", text: $name).textFieldStyle(.roundedBorder)
             TextField("URL", text: $url).textFieldStyle(.roundedBorder)
+            TagTextField(tags: $tags)
             HStack {
                 Button("Cancel") { workspaceStore.cancelWebLinkCreation() }
                 Spacer()
-                Button("Add Web Link") { workspaceStore.createWebLink(name: name, urlString: url) }
+                Button("Add Web Link") { workspaceStore.createWebLink(name: name, urlString: url, tags: tags.split(separator: ",").map(String.init)) }
                     .buttonStyle(.borderedProminent)
                     .disabled(url.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
@@ -1193,12 +1638,14 @@ private struct TerminalCommandForm: View {
     @EnvironmentObject private var workspaceStore: SecureWorkspaceStore
     @State private var name = ""
     @State private var command = ""
+    @State private var tags = ""
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text("New Terminal Connection").font(.title2.weight(.semibold))
             TextField("Name", text: $name).textFieldStyle(.roundedBorder)
             TextField("Command", text: $command).textFieldStyle(.roundedBorder)
+            TagTextField(tags: $tags)
             Text("The command runs in a new Terminal window when you double-click this item.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -1206,7 +1653,7 @@ private struct TerminalCommandForm: View {
                 Button("Cancel") { workspaceStore.cancelTerminalCommandCreation() }
                 Spacer()
                 Button("Add Terminal Connection") {
-                    workspaceStore.createTerminalCommand(name: name, command: command)
+                    workspaceStore.createTerminalCommand(name: name, command: command, tags: tags.split(separator: ",").map(String.init))
                 }
                 .buttonStyle(.borderedProminent)
                 .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || command.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
@@ -1221,17 +1668,20 @@ private struct TerminalCommandEditorForm: View {
     @EnvironmentObject private var workspaceStore: SecureWorkspaceStore
     @State private var name = ""
     @State private var command = ""
+    @State private var tags = ""
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text("Edit Terminal Connection").font(.title2.weight(.semibold))
             TextField("Name", text: $name).textFieldStyle(.roundedBorder)
             TextField("Command", text: $command).textFieldStyle(.roundedBorder)
+            TagTextField(tags: $tags)
             HStack {
                 Button("Cancel") { workspaceStore.cancelTerminalCommandEditor() }
                 Spacer()
-                Button("Save") { workspaceStore.updateTerminalCommand(name: name, command: command) }
+                Button("Save") { workspaceStore.updateTerminalCommand(name: name, command: command, tags: tags.split(separator: ",").map(String.init)) }
                     .buttonStyle(.borderedProminent)
+                    .keyboardShortcut(.defaultAction)
                     .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || command.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
         }
@@ -1241,6 +1691,7 @@ private struct TerminalCommandEditorForm: View {
             guard let terminalCommand = workspaceStore.editingTerminalCommand else { return }
             name = terminalCommand.name
             command = terminalCommand.command
+            tags = terminalCommand.tags.joined(separator: ", ")
         }
     }
 }
@@ -1249,17 +1700,20 @@ private struct WebLinkEditorForm: View {
     @EnvironmentObject private var workspaceStore: SecureWorkspaceStore
     @State private var name = ""
     @State private var url = ""
+    @State private var tags = ""
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text("Edit Web Link").font(.title2.weight(.semibold))
             TextField("Name (optional)", text: $name).textFieldStyle(.roundedBorder)
             TextField("URL", text: $url).textFieldStyle(.roundedBorder)
+            TagTextField(tags: $tags)
             HStack {
                 Button("Cancel") { workspaceStore.cancelWebLinkEditor() }
                 Spacer()
-                Button("Save") { workspaceStore.updateWebLink(name: name, urlString: url) }
+                Button("Save") { workspaceStore.updateWebLink(name: name, urlString: url, tags: tags.split(separator: ",").map(String.init)) }
                     .buttonStyle(.borderedProminent)
+                    .keyboardShortcut(.defaultAction)
                     .disabled(url.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
         }
@@ -1268,6 +1722,7 @@ private struct WebLinkEditorForm: View {
         .onAppear {
             name = workspaceStore.editingWebLink?.name ?? ""
             url = workspaceStore.editingWebLink?.url ?? ""
+            tags = workspaceStore.editingWebLink?.tags.joined(separator: ", ") ?? ""
         }
     }
 }
@@ -1279,6 +1734,7 @@ private struct SSHConnectionEditorForm: View {
     @State private var username = ""
     @State private var port = "22"
     @State private var credentialID: UUID?
+    @State private var tags = ""
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -1298,6 +1754,7 @@ private struct SSHConnectionEditorForm: View {
                     Text("\(credential.name) (\(credential.username))").tag(Optional(credential.id))
                 }
             }
+            TagTextField(tags: $tags)
 
             HStack {
                 Button("Cancel") { workspaceStore.cancelSSHConnectionEditor() }
@@ -1307,9 +1764,10 @@ private struct SSHConnectionEditorForm: View {
                         workspaceStore.errorMessage = "Enter a valid SSH port."
                         return
                     }
-                    workspaceStore.updateSSHConnection(name: name, host: host, username: username, port: portNumber, credentialID: credentialID)
+                    workspaceStore.updateSSHConnection(name: name, host: host, username: username, port: portNumber, credentialID: credentialID, tags: tags.split(separator: ",").map(String.init))
                 }
                 .buttonStyle(.borderedProminent)
+                .keyboardShortcut(.defaultAction)
                 .disabled(host.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
         }
@@ -1322,6 +1780,7 @@ private struct SSHConnectionEditorForm: View {
                 username = connection.username
                 port = String(connection.port)
                 credentialID = connection.credentialID
+                tags = connection.tags.joined(separator: ", ")
             }
         }
     }

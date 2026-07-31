@@ -18,6 +18,7 @@ struct GateTreeApp: App {
             ContentView()
                 .environmentObject(workspaceStore)
                 .frame(minWidth: 900, minHeight: 560)
+                .background(WindowTitleSetter(title: AppBuildInfo.windowTitle))
         }
         .commands {
             CommandMenu("Connections") {
@@ -53,6 +54,12 @@ struct GateTreeApp: App {
                 }
                 .keyboardShortcut("s", modifiers: [.command, .shift])
                 .disabled(!workspaceStore.isUnlocked || workspaceStore.isProcessing)
+            }
+            CommandGroup(replacing: .help) {
+                Button("GateTree Help") {
+                    workspaceStore.isShowingHelp = true
+                }
+                .keyboardShortcut("?", modifiers: .command)
             }
         }
     }
