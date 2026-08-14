@@ -48,6 +48,7 @@ echo "==> Building Release ($SIGN_MODE signing)"
 RDP_CFLAGS="$(pkg-config --cflags freerdp-client3 openssl)"
 RDP_LDFLAGS="$(pkg-config --libs freerdp-client3 openssl)"
 xcodebuild \
+  -verbose \
   -project "$APP_NAME.xcodeproj" \
   -scheme "$APP_NAME" \
   -configuration Release \
