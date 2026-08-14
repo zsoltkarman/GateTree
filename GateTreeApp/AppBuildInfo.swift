@@ -5,7 +5,7 @@ import Foundation
 import SwiftUI
 
 enum AppBuildInfo {
-    static let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.2.1"
+    static let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.2.2"
 
     static let windowTitle = "GateTree"
 

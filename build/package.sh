@@ -18,7 +18,7 @@
 
 set -euo pipefail
 
-VERSION="${1:-v0.2.1-alpha}"
+VERSION="${1:-v0.2.2-alpha}"
 PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 BUILD_DIR="$PROJECT_ROOT/.build-release"
 DIST_DIR="$PROJECT_ROOT/.dist"
@@ -45,11 +45,15 @@ echo "==> Generating Xcode project"
 xcodegen generate
 
 echo "==> Building Release ($SIGN_MODE signing)"
+RDP_CFLAGS="$(pkg-config --cflags freerdp-client3 openssl)"
+RDP_LDFLAGS="$(pkg-config --libs freerdp-client3 openssl)"
 xcodebuild \
   -project "$APP_NAME.xcodeproj" \
   -scheme "$APP_NAME" \
   -configuration Release \
   -derivedDataPath "$BUILD_DIR" \
+  OTHER_CFLAGS="$RDP_CFLAGS" \
+  OTHER_LDFLAGS="$RDP_LDFLAGS" \
   CODE_SIGNING_ALLOWED=NO \
   build
 
