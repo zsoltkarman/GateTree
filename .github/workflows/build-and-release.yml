@@ -27,7 +27,13 @@ jobs:
           echo "$RUNNER_TEMP/xcodegen/bin" >> "$GITHUB_PATH"
 
       - name: Install native RDP dependencies
-        run: brew install freerdp openssl@3
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: "1"
+        run: |
+          # GitHub's macOS image can include this untrusted, unrelated tap.
+          # Removing it keeps Homebrew's trust checks enabled for all formulae.
+          brew untap aws/tap || true
+          brew install freerdp openssl@3
 
       - name: Configure Developer ID signing
         env:
