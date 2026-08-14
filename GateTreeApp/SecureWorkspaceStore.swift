@@ -22,6 +22,10 @@ final class SecureWorkspaceStore: ObservableObject {
     @Published private(set) var quickAccessWebLinkIDs: [UUID] = []
     @Published private(set) var selectedSSHConnection: SSHConnection?
     @Published private(set) var openSSHConnections: [SSHConnection] = []
+    @Published private(set) var selectedRDPConnection: SSHConnection?
+    @Published private(set) var openRDPConnections: [SSHConnection] = []
+    @Published private(set) var activeSessionID: UUID?
+    @Published private(set) var activeSessionProtocol: ConnectionProtocol?
     @Published private(set) var selectedWebLink: WebLink?
     @Published private(set) var activeExternalWebLink: WebLink?
     @Published private(set) var openExternalWebLinks: [WebLink] = []
@@ -36,11 +40,14 @@ final class SecureWorkspaceStore: ObservableObject {
     @Published var isShowingDecryptionConfirmation = false
     @Published var isShowingFolderEditor = false
     @Published var isShowingFolderDeletionConfirmation = false
+    @Published var isShowingEmptyTrashConfirmation = false
     @Published var isShowingHelp = false
     @Published var editingFolderName = ""
     @Published var editingFolderCredentialID: UUID?
     @Published var editingFolderTags = ""
     @Published var isShowingSSHConnectionCreation = false
+    @Published var isShowingRDPConnectionCreation = false
+    @Published var isShowingRDPConnectionEditor = false
     @Published var isShowingWebLinkCreation = false
     @Published var isShowingTerminalCommandCreation = false
     @Published var isShowingTerminalCommandEditor = false
@@ -55,6 +62,10 @@ final class SecureWorkspaceStore: ObservableObject {
     @Published var isShowingSSHConnectionDeletionConfirmation = false
     @Published var isShowingSSHUsernamePrompt = false
     @Published var promptedSSHUsername = ""
+    @Published var isShowingRDPUsernamePrompt = false
+    @Published var promptedRDPUsername = ""
+    @Published var isPromptingRDPPassword = false
+    @Published var promptedRDPPassword = ""
     @Published var isShowingCredentialCreation = false
     @Published var isShowingCredentialEditor = false
     @Published var isShowingCredentialDeletionConfirmation = false
@@ -68,6 +79,7 @@ final class SecureWorkspaceStore: ObservableObject {
     private var editingFolderID: UUID?
     private var deletingFolderID: UUID?
     private var sshConnectionParentFolderID: UUID?
+    private var rdpConnectionParentFolderID: UUID?
     private var webLinkParentFolderID: UUID?
     private var terminalCommandParentFolderID: UUID?
     private var terminalCommandAwaitingInput: TerminalCommand?
@@ -75,14 +87,19 @@ final class SecureWorkspaceStore: ObservableObject {
     @Published private(set) var editingTerminalCommand: TerminalCommand?
     @Published private(set) var editingWebLink: WebLink?
     @Published private(set) var editingSSHConnection: SSHConnection?
+    @Published private(set) var editingRDPConnection: SSHConnection?
     private var deletingSSHConnectionID: UUID?
     private var pendingSSHConnection: SSHConnection?
+    private var pendingRDPConnection: SSHConnection?
+    private var pendingRDPUsername = ""
+    private var pendingRDPWasAlreadyOpen = false
     private var deletingCredentialID: UUID?
     @Published private(set) var editingCredential: Credential?
-    private var lastOpenedWebLinkID: UUID?
-    private var lastOpenedWebLinkDate: Date = .distantPast
+    private var webLinksBeingOpened: Set<UUID> = []
     private var chromeTabIDsByWebLinkID: [UUID: Int] = [:]
     private var sshPasswordsByConnectionID: [UUID: String] = [:]
+    private var rdpPasswordsByConnectionID: [UUID: String] = [:]
+    private var keepassMasterPasswords: [String: String] = [:]
     private var workspaceWatcher: DispatchSourceFileSystemObject?
     private var workspaceReloadTask: Task<Void, Never>?
     private var workspaceReloadTimer: Timer?
@@ -380,21 +397,16 @@ final class SecureWorkspaceStore: ObservableObject {
         isShowingCredentialCreation = true
     }
 
-    func createCredential(name: String, username: String, password: String) {
+    func createCredential(name: String, username: String, databasePath: String, entryPath: String) {
         let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedUsername = username.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedName.isEmpty, !trimmedUsername.isEmpty, !isProcessing else { return }
-
-        let credential = Credential(name: trimmedName, username: trimmedUsername)
-        do {
-            try CredentialKeychain.save(password, for: credential.id)
-            credentials.append(credential)
-            synchronizeWorkspace()
-            isShowingCredentialCreation = false
-            save()
-        } catch {
-            errorMessage = "Could not save the password in macOS Keychain."
-        }
+        let databasePath = databasePath.trimmingCharacters(in: .whitespacesAndNewlines)
+        let entryPath = entryPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedName.isEmpty, !databasePath.isEmpty, !entryPath.isEmpty, !isProcessing else { return }
+        credentials.append(Credential(name: trimmedName, username: trimmedUsername, keepassDatabasePath: databasePath, keepassEntryPath: entryPath))
+        synchronizeWorkspace()
+        isShowingCredentialCreation = false
+        save()
     }
 
     func cancelCredentialCreation() { isShowingCredentialCreation = false }
@@ -405,25 +417,19 @@ final class SecureWorkspaceStore: ObservableObject {
         isShowingCredentialEditor = true
     }
 
-    func updateCredential(name: String, username: String, newPassword: String) {
+    func updateCredential(name: String, username: String, databasePath: String, entryPath: String) {
         guard let editingCredential, !isProcessing else { return }
         let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedUsername = username.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedName.isEmpty, !trimmedUsername.isEmpty else { return }
-
-        do {
-            if !newPassword.isEmpty {
-                try CredentialKeychain.save(newPassword, for: editingCredential.id)
-            }
-            guard let index = credentials.firstIndex(where: { $0.id == editingCredential.id }) else { return }
-            credentials[index] = Credential(id: editingCredential.id, name: trimmedName, username: trimmedUsername)
-            synchronizeWorkspace()
-            self.editingCredential = nil
-            isShowingCredentialEditor = false
-            save()
-        } catch {
-            errorMessage = "Could not update the password in macOS Keychain."
-        }
+        let databasePath = databasePath.trimmingCharacters(in: .whitespacesAndNewlines)
+        let entryPath = entryPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedName.isEmpty, !databasePath.isEmpty, !entryPath.isEmpty,
+              let index = credentials.firstIndex(where: { $0.id == editingCredential.id }) else { return }
+        credentials[index] = Credential(id: editingCredential.id, name: trimmedName, username: trimmedUsername, keepassDatabasePath: databasePath, keepassEntryPath: entryPath)
+        synchronizeWorkspace()
+        self.editingCredential = nil
+        isShowingCredentialEditor = false
+        save()
     }
 
     func cancelCredentialEditor() {
@@ -450,7 +456,6 @@ final class SecureWorkspaceStore: ObservableObject {
             return
         }
         credentials.removeAll { $0.id == deletingCredentialID }
-        CredentialKeychain.delete(for: deletingCredentialID)
         synchronizeWorkspace()
         self.deletingCredentialID = nil
         isShowingCredentialDeletionConfirmation = false
@@ -544,6 +549,12 @@ final class SecureWorkspaceStore: ObservableObject {
         isShowingSSHConnectionCreation = true
     }
 
+    func showRDPConnectionCreation(in folder: WorkspaceFolder? = nil) {
+        guard !isProcessing else { return }
+        rdpConnectionParentFolderID = folder?.id
+        isShowingRDPConnectionCreation = true
+    }
+
     func showWebLinkCreation(in folder: WorkspaceFolder? = nil) {
         guard !isProcessing else { return }
         webLinkParentFolderID = folder?.id
@@ -611,7 +622,7 @@ final class SecureWorkspaceStore: ObservableObject {
         isShowingTerminalCommandEditor = false
     }
 
-    func createWebLink(name: String, urlString: String, tags: [String]) {
+    func createWebLink(name: String, urlString: String, tags: [String], icon: WebLinkIcon = .icon12) {
         let trimmedURL = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let url = URL(string: trimmedURL),
@@ -622,7 +633,7 @@ final class SecureWorkspaceStore: ObservableObject {
             return
         }
 
-        let webLink = WebLink(name: trimmedName.isEmpty ? (url.host ?? trimmedURL) : trimmedName, url: trimmedURL, tags: normalizedTags(tags))
+        let webLink = WebLink(name: trimmedName.isEmpty ? (url.host ?? trimmedURL) : trimmedName, url: trimmedURL, tags: normalizedTags(tags), icon: icon)
         if let webLinkParentFolderID {
             guard insert(webLink, into: &folders, below: webLinkParentFolderID) else {
                 errorMessage = "The destination folder is no longer available."
@@ -648,7 +659,7 @@ final class SecureWorkspaceStore: ObservableObject {
         isShowingWebLinkEditor = true
     }
 
-    func updateWebLink(name: String, urlString: String, tags: [String]) {
+    func updateWebLink(name: String, urlString: String, tags: [String], icon: WebLinkIcon) {
         guard let editingWebLink, !isProcessing else { return }
         let trimmedURL = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -662,7 +673,8 @@ final class SecureWorkspaceStore: ObservableObject {
             id: editingWebLink.id,
             name: trimmedName.isEmpty ? (url.host ?? trimmedURL) : trimmedName,
             url: trimmedURL,
-            tags: normalizedTags(tags)
+            tags: normalizedTags(tags),
+            icon: icon
         )
         if let index = rootWebLinks.firstIndex(where: { $0.id == updated.id }) {
             rootWebLinks[index] = updated
@@ -795,12 +807,13 @@ final class SecureWorkspaceStore: ObservableObject {
             .trimmingCharacters(in: CharacterSet(charactersIn: "\\\"'"))
     }
 
-    func createSSHConnection(name: String, host: String, username: String, port: Int, tags: [String]) {
+    func createSSHConnection(name: String, host: String, username: String, port: Int, tags: [String], localTunnel: SSHLocalTunnel?) {
         let trimmedHost = host.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedUsername = username.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedHost.isEmpty,
               (1...65_535).contains(port),
+              isValid(localTunnel: localTunnel),
               !isProcessing else { return }
 
         let connection = SSHConnection(
@@ -809,7 +822,8 @@ final class SecureWorkspaceStore: ObservableObject {
             username: trimmedUsername,
             port: port,
             credentialID: pendingConnectionCredentialID,
-            tags: normalizedTags(tags)
+            tags: normalizedTags(tags),
+            localTunnel: localTunnel
         )
         if let sshConnectionParentFolderID {
             guard insert(connection, into: &folders, below: sshConnectionParentFolderID) else {
@@ -838,17 +852,178 @@ final class SecureWorkspaceStore: ObservableObject {
         isShowingSSHConnectionCreation = false
     }
 
+    func createRDPConnection(name: String, host: String, username: String, domain: String, port: Int, credentialID: UUID?, tags: [String]) {
+        let trimmedHost = host.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedHost.isEmpty, (1...65_535).contains(port), !isProcessing else { return }
+
+        let connection = SSHConnection(
+            name: trimmedName.isEmpty ? trimmedHost : trimmedName,
+            host: trimmedHost,
+            username: username.trimmingCharacters(in: .whitespacesAndNewlines),
+            port: port,
+            credentialID: credentialID,
+            tags: normalizedTags(tags),
+            connectionType: .rdp,
+            domain: normalizedRDPDomain(domain)
+        )
+        if let rdpConnectionParentFolderID {
+            guard insert(connection, into: &folders, below: rdpConnectionParentFolderID) else {
+                errorMessage = "The destination folder is no longer available."
+                return
+            }
+        } else {
+            rootConnections.append(connection)
+        }
+        synchronizeWorkspace()
+        rdpConnectionParentFolderID = nil
+        isShowingRDPConnectionCreation = false
+        save()
+    }
+
+    func cancelRDPConnectionCreation() {
+        rdpConnectionParentFolderID = nil
+        isShowingRDPConnectionCreation = false
+    }
+
+    func launchRDPConnection(_ connection: SSHConnection) {
+        guard connection.connectionType == .rdp, !isProcessing else { return }
+        pendingRDPWasAlreadyOpen = openRDPConnections.contains(where: { $0.id == connection.id })
+        activateRDPConnection(connection, password: rdpPasswordsByConnectionID[connection.id])
+        let credential = effectiveCredential(for: connection)
+        let entry = credential.flatMap(keepassEntry(for:))
+        let username = connection.username.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? (entry?.username ?? credential?.username ?? "")
+            : connection.username.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !username.isEmpty else {
+            pendingRDPConnection = connection
+            promptedRDPUsername = ""
+            isShowingRDPUsernamePrompt = true
+            return
+        }
+
+        startRDPConnection(connection, username: username)
+    }
+
+    func connectWithPromptedRDPUsername() {
+        let username = promptedRDPUsername.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let pendingRDPConnection, !username.isEmpty else { return }
+        promptedRDPUsername = ""
+        isShowingRDPUsernamePrompt = false
+        startRDPConnection(pendingRDPConnection, username: username)
+    }
+
+    func connectWithPromptedRDPPassword() {
+        guard let pendingRDPConnection, !pendingRDPUsername.isEmpty else { return }
+        let sessionConnection = rdpSessionConnection(pendingRDPConnection, username: pendingRDPUsername)
+        activateRDPConnection(sessionConnection, password: promptedRDPPassword)
+        self.pendingRDPConnection = nil
+        pendingRDPUsername = ""
+        promptedRDPPassword = ""
+        isPromptingRDPPassword = false
+    }
+
+    func cancelRDPUsernamePrompt() {
+        if !pendingRDPWasAlreadyOpen, let pendingRDPConnection {
+            closeRDPConnection(pendingRDPConnection.id)
+        }
+        pendingRDPConnection = nil
+        pendingRDPUsername = ""
+        pendingRDPWasAlreadyOpen = false
+        promptedRDPUsername = ""
+        promptedRDPPassword = ""
+        isShowingRDPUsernamePrompt = false
+        isPromptingRDPPassword = false
+    }
+
+    private func startRDPConnection(_ connection: SSHConnection, username: String) {
+        let sessionConnection = rdpSessionConnection(connection, username: username)
+        if let password = effectiveCredential(for: connection).flatMap(keepassEntry(for:))?.password {
+            activateRDPConnection(sessionConnection, password: password)
+        } else {
+            pendingRDPConnection = connection
+            pendingRDPUsername = username
+            promptedRDPPassword = ""
+            isPromptingRDPPassword = true
+        }
+    }
+
+    private func rdpSessionConnection(_ connection: SSHConnection, username: String) -> SSHConnection {
+        let rawUsername = username.trimmingCharacters(in: .whitespacesAndNewlines)
+        var normalizedUsername = rawUsername
+        var normalizedDomain = connection.domain.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let separator = rawUsername.firstIndex(of: "\\") {
+            normalizedDomain = String(rawUsername[..<separator])
+            normalizedUsername = String(rawUsername[rawUsername.index(after: separator)...])
+        }
+        return SSHConnection(
+            id: connection.id,
+            name: connection.name,
+            host: connection.host,
+            username: normalizedUsername,
+            port: connection.port,
+            credentialID: connection.credentialID,
+            tags: connection.tags,
+            connectionType: .rdp,
+            domain: normalizedDomain
+        )
+    }
+
+    func rdpDomainForEditor(_ connection: SSHConnection) -> String {
+        normalizedRDPDomain(connection.domain)
+    }
+
+    private func normalizedRDPDomain(_ value: String) -> String {
+        let domain = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        // A Windows domain never contains '='. Older experimental RDP records
+        // could contain an encoded password in this newly added field; do not
+        // show or save such a value as a domain.
+        guard !domain.contains("="), domain.count <= 63 else { return "" }
+        return domain
+    }
+
     func showSSHConnectionEditor(_ connection: SSHConnection) {
         guard !isProcessing else { return }
         editingSSHConnection = connection
         isShowingSSHConnectionEditor = true
     }
 
-    func updateSSHConnection(name: String, host: String, username: String, port: Int, credentialID: UUID?, tags: [String]) {
+    func showRDPConnectionEditor(_ connection: SSHConnection) {
+        guard connection.connectionType == .rdp, !isProcessing else { return }
+        editingRDPConnection = connection
+        isShowingRDPConnectionEditor = true
+    }
+
+    func updateRDPConnection(name: String, host: String, username: String, domain: String, port: Int, credentialID: UUID?, tags: [String]) {
+        guard let editingRDPConnection,
+              !host.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              (1...65_535).contains(port), !isProcessing else { return }
+        let trimmedHost = host.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let updated = SSHConnection(id: editingRDPConnection.id, name: trimmedName.isEmpty ? trimmedHost : trimmedName, host: trimmedHost, username: username.trimmingCharacters(in: .whitespacesAndNewlines), port: port, credentialID: credentialID, tags: normalizedTags(tags), connectionType: .rdp, domain: normalizedRDPDomain(domain))
+        if let index = rootConnections.firstIndex(where: { $0.id == updated.id }) {
+            rootConnections[index] = updated
+        } else if !updateConnection(updated, in: &folders) {
+            errorMessage = "The RDP connection is no longer available."
+            return
+        }
+        synchronizeWorkspace()
+        self.editingRDPConnection = nil
+        isShowingRDPConnectionEditor = false
+        save()
+    }
+
+    func cancelRDPConnectionEditor() {
+        editingRDPConnection = nil
+        isShowingRDPConnectionEditor = false
+    }
+
+    func updateSSHConnection(name: String, host: String, username: String, port: Int, credentialID: UUID?, tags: [String], localTunnel: SSHLocalTunnel?) {
         guard let editingSSHConnection,
               !isProcessing,
               !host.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-              (1...65_535).contains(port) else { return }
+              (1...65_535).contains(port),
+              isValid(localTunnel: localTunnel) else { return }
 
         let trimmedHost = host.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -860,7 +1035,8 @@ final class SecureWorkspaceStore: ObservableObject {
             username: trimmedUsername,
             port: port,
             credentialID: credentialID,
-            tags: normalizedTags(tags)
+            tags: normalizedTags(tags),
+            localTunnel: localTunnel
         )
 
         if let index = rootConnections.firstIndex(where: { $0.id == updated.id }) {
@@ -893,8 +1069,9 @@ final class SecureWorkspaceStore: ObservableObject {
         UserDefaults.standard.set(connection.id.uuidString, forKey: "GateTree.lastSelectedTreeItemID")
         let host = connection.host.trimmingCharacters(in: .whitespacesAndNewlines)
         let inheritedCredential = effectiveCredential(for: connection)
+        let entry = inheritedCredential.flatMap(keepassEntry(for:))
         let username = connection.username.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            ? (inheritedCredential?.username ?? "")
+            ? (entry?.username ?? inheritedCredential?.username ?? "")
             : connection.username.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !host.isEmpty else {
             errorMessage = "This SSH connection has no host or IP address."
@@ -911,29 +1088,28 @@ final class SecureWorkspaceStore: ObservableObject {
                 host: connection.host,
                 username: username,
                 port: connection.port,
-                credentialID: connection.credentialID
+                credentialID: connection.credentialID,
+                tags: connection.tags,
+                localTunnel: connection.localTunnel
             )
-            activateSSHConnection(
-                sessionConnection,
-                password: inheritedCredential.flatMap { try? CredentialKeychain.password(for: $0.id) }
-            )
+            activateSSHConnection(sessionConnection, password: entry?.password)
         }
     }
 
     func connectWithPromptedSSHUsername() {
         let username = promptedSSHUsername.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let pendingSSHConnection, !username.isEmpty else { return }
+        guard let pendingSSHConnection else { return }
         let sessionConnection = SSHConnection(
             id: pendingSSHConnection.id,
             name: pendingSSHConnection.name,
             host: pendingSSHConnection.host,
             username: username,
-            port: pendingSSHConnection.port
+            port: pendingSSHConnection.port,
+            credentialID: pendingSSHConnection.credentialID,
+            tags: pendingSSHConnection.tags,
+            localTunnel: pendingSSHConnection.localTunnel
         )
-        activateSSHConnection(
-            sessionConnection,
-            password: effectiveCredential(for: pendingSSHConnection).flatMap { try? CredentialKeychain.password(for: $0.id) }
-        )
+        activateSSHConnection(sessionConnection, password: effectiveCredential(for: pendingSSHConnection).flatMap(keepassEntry(for:))?.password)
         self.pendingSSHConnection = nil
         isShowingSSHUsernamePrompt = false
     }
@@ -955,12 +1131,50 @@ final class SecureWorkspaceStore: ObservableObject {
         guard selectedSSHConnection?.id == id else { return }
         selectedSSHConnection = openSSHConnections.last
         selectedSSHPassword = selectedSSHConnection.flatMap { sshPasswordsByConnectionID[$0.id] }
+        if activeSessionProtocol == .ssh && activeSessionID == id {
+            activeSessionID = selectedSSHConnection?.id
+            activeSessionProtocol = selectedSSHConnection == nil ? nil : .ssh
+        }
+    }
+
+    func closeRDPConnection(_ id: UUID) {
+        openRDPConnections.removeAll { $0.id == id }
+        rdpPasswordsByConnectionID[id] = nil
+        guard selectedRDPConnection?.id == id else { return }
+        selectedRDPConnection = openRDPConnections.last
+        if activeSessionProtocol == .rdp && activeSessionID == id {
+            if let nextRDP = selectedRDPConnection {
+                activeSessionID = nextRDP.id
+                activeSessionProtocol = .rdp
+            } else if let ssh = selectedSSHConnection {
+                activeSessionID = ssh.id
+                activeSessionProtocol = .ssh
+            } else {
+                activeSessionID = nil
+                activeSessionProtocol = nil
+            }
+        }
+    }
+
+    func selectOpenRDPConnection(_ connection: SSHConnection) {
+        guard openRDPConnections.contains(where: { $0.id == connection.id }) else { return }
+        selectedRDPConnection = connection
+        activeSessionID = connection.id
+        activeSessionProtocol = .rdp
+        selectedWebLink = nil
+        activeExternalWebLink = nil
+    }
+
+    func rdpPassword(for connection: SSHConnection) -> String? {
+        rdpPasswordsByConnectionID[connection.id]
     }
 
     func selectOpenSSHConnection(_ connection: SSHConnection) {
         guard openSSHConnections.contains(where: { $0.id == connection.id }) else { return }
         selectedSSHConnection = connection
         selectedSSHPassword = sshPasswordsByConnectionID[connection.id]
+        activeSessionID = connection.id
+        activeSessionProtocol = .ssh
         selectedWebLink = nil
         activeExternalWebLink = nil
     }
@@ -978,6 +1192,33 @@ final class SecureWorkspaceStore: ObservableObject {
         sshPasswordsByConnectionID[connection.id] = password
         selectedSSHConnection = connection
         selectedSSHPassword = password
+        activeSessionID = connection.id
+        activeSessionProtocol = .ssh
+    }
+
+    private func isValid(localTunnel: SSHLocalTunnel?) -> Bool {
+        guard let localTunnel else { return true }
+        guard (1...65_535).contains(localTunnel.localPort),
+              (1...65_535).contains(localTunnel.remotePort),
+              !localTunnel.remoteHost.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            errorMessage = "Enter a valid local tunnel port and destination."
+            return false
+        }
+        return true
+    }
+
+    private func activateRDPConnection(_ connection: SSHConnection, password: String?) {
+        if let index = openRDPConnections.firstIndex(where: { $0.id == connection.id }) {
+            openRDPConnections[index] = connection
+        } else {
+            openRDPConnections.append(connection)
+        }
+        rdpPasswordsByConnectionID[connection.id] = password
+        selectedRDPConnection = connection
+        activeSessionID = connection.id
+        activeSessionProtocol = .rdp
+        selectedWebLink = nil
+        activeExternalWebLink = nil
     }
 
     func selectWebLink(_ webLink: WebLink) {
@@ -993,13 +1234,15 @@ final class SecureWorkspaceStore: ObservableObject {
             openExternalWebLinks.append(webLink)
         }
 
-        if lastOpenedWebLinkID == webLink.id,
-           Date().timeIntervalSince(lastOpenedWebLinkDate) < 0.7 {
+        // A double-click can deliver its second event only after Chrome has
+        // started, so a time-based debounce is not reliable here. Keep this
+        // bookmark locked until the initial open has settled instead.
+        guard !webLinksBeingOpened.contains(webLink.id) else {
             return
         }
-        lastOpenedWebLinkID = webLink.id
-        lastOpenedWebLinkDate = .now
+        webLinksBeingOpened.insert(webLink.id)
         activateChromeTab(for: webLink)
+        releaseWebLinkOpenLock(for: webLink.id)
     }
 
     func openWebLinkInChrome(_ webLink: WebLink) {
@@ -1008,53 +1251,36 @@ final class SecureWorkspaceStore: ObservableObject {
             return
         }
 
-        let escapedURL = webLink.url
-            .replacingOccurrences(of: "\\", with: "\\\\")
-            .replacingOccurrences(of: "\"", with: "\\\"")
-        let scriptSource = """
-        tell application "Google Chrome"
-            activate
-            if (count of windows) is 0 then make new window
-            set newTab to make new tab at end of tabs of front window with properties {URL:"\(escapedURL)"}
-            set active tab index of front window to (index of newTab)
-            return id of newTab
-        end tell
-        """
-        var scriptError: NSDictionary?
-        if let tabID = NSAppleScript(source: scriptSource)?
-           .executeAndReturnError(&scriptError)
-            .int32Value,
-           scriptError == nil {
-            rememberChromeTabID(Int(tabID), for: webLink.id)
-            return
-        }
-
-        if let chromeURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.google.Chrome") {
-            NSWorkspace.shared.open(
-                [url],
-                withApplicationAt: chromeURL,
-                configuration: NSWorkspace.OpenConfiguration(),
-                completionHandler: nil
-            )
-        } else {
-            NSWorkspace.shared.open(url)
-        }
+        // Let Launch Services perform the open exactly once. AppleScript can
+        // report an error after creating a Chrome tab, causing a fallback open
+        // to create a duplicate tab.
+        openURLInChrome(url)
     }
 
     func activateChromeTab(for webLink: WebLink) {
-        let escapedURL = webLink.url
+        // Avoid AppleScript launching Chrome, which would create Chrome's
+        // default tab and then a second tab for this bookmark.
+        guard isChromeRunning else {
+            openWebLinkInChrome(webLink)
+            return
+        }
+
+        let tabMatch = chromeTabMatch(for: webLink.url)
+        let escapedURL = tabMatch.url
             .replacingOccurrences(of: "\\", with: "\\\\")
             .replacingOccurrences(of: "\"", with: "\\\"")
         let knownTabID = chromeTabIDsByWebLinkID[webLink.id] ?? -1
+        let matchesAnyPathAtTargetHost = tabMatch.matchesAnyPathAtTargetHost ? "true" : "false"
         let scriptSource = """
         tell application "Google Chrome"
             set targetURL to "\(escapedURL)"
             set targetTabID to \(knownTabID)
+            set matchesAnyPathAtTargetHost to \(matchesAnyPathAtTargetHost)
             repeat with browserWindow in windows
                 set tabIndex to 0
                 repeat with browserTab in tabs of browserWindow
                     set tabIndex to tabIndex + 1
-                    if id of browserTab is targetTabID or URL of browserTab is targetURL then
+                    if id of browserTab is targetTabID or URL of browserTab is targetURL or (matchesAnyPathAtTargetHost and URL of browserTab starts with targetURL) then
                         set active tab index of browserWindow to tabIndex
                         set index of browserWindow to 1
                         activate
@@ -1075,12 +1301,38 @@ final class SecureWorkspaceStore: ObservableObject {
         openWebLinkInChrome(webLink)
     }
 
-    private func rememberChromeTabID(_ tabID: Int, for webLinkID: UUID) {
-        chromeTabIDsByWebLinkID[webLinkID] = tabID
-        UserDefaults.standard.set(
-            Dictionary(uniqueKeysWithValues: chromeTabIDsByWebLinkID.map { ($0.key.uuidString, $0.value) }),
-            forKey: "GateTree.chromeTabIDs"
-        )
+    private var isChromeRunning: Bool {
+        !NSRunningApplication.runningApplications(withBundleIdentifier: "com.google.Chrome").isEmpty
+    }
+
+    private func chromeTabMatch(for urlString: String) -> (url: String, matchesAnyPathAtTargetHost: Bool) {
+        guard var components = URLComponents(string: urlString),
+              components.path.isEmpty || components.path == "/" else {
+            return (urlString, false)
+        }
+
+        components.path = "/"
+        return (components.url?.absoluteString ?? urlString, true)
+    }
+
+    private func openURLInChrome(_ url: URL) {
+        if let chromeURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.google.Chrome") {
+            NSWorkspace.shared.open(
+                [url],
+                withApplicationAt: chromeURL,
+                configuration: NSWorkspace.OpenConfiguration(),
+                completionHandler: nil
+            )
+        } else {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
+    private func releaseWebLinkOpenLock(for webLinkID: UUID) {
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(2))
+            self?.webLinksBeingOpened.remove(webLinkID)
+        }
     }
 
     func focusChrome() {
@@ -1203,6 +1455,11 @@ final class SecureWorkspaceStore: ObservableObject {
         if let folderParentID, !insert(folder, into: &folders, below: folderParentID) {
             errorMessage = "The parent folder is no longer available."
             return
+        } else if let folderParentID {
+            // Keep the destination visible after the context-menu action. A
+            // context click can otherwise also reach the row's tap handler.
+            expandedFolderIDs.insert(folderParentID)
+            UserDefaults.standard.set(expandedFolderIDs.map(\.uuidString), forKey: "GateTree.expandedFolderIDs")
         } else if folderParentID == nil {
             folders.append(folder)
         }
@@ -1264,6 +1521,34 @@ final class SecureWorkspaceStore: ObservableObject {
         synchronizeWorkspace()
         self.deletingFolderID = nil
         isShowingFolderDeletionConfirmation = false
+        save()
+    }
+
+    func isTrashFolder(_ folder: WorkspaceFolder) -> Bool {
+        folders.contains { $0.id == folder.id && $0.name == "Trash" }
+    }
+
+    func showEmptyTrashConfirmation(_ folder: WorkspaceFolder) {
+        guard isTrashFolder(folder),
+              (!folder.children.isEmpty || !folder.connections.isEmpty || !folder.webLinks.isEmpty || !folder.terminalCommands.isEmpty),
+              !isProcessing else { return }
+        isShowingEmptyTrashConfirmation = true
+    }
+
+    func emptyTrash() {
+        guard let trashIndex = folders.firstIndex(where: { $0.name == "Trash" }), !isProcessing else { return }
+
+        let removedWebLinkIDs = Set(
+            folders[trashIndex].webLinks.map(\.id) + allWebLinks(in: folders[trashIndex].children).map(\.id)
+        )
+        quickAccessWebLinkIDs.removeAll { removedWebLinkIDs.contains($0) }
+        folders[trashIndex].children.removeAll()
+        folders[trashIndex].connections.removeAll()
+        folders[trashIndex].webLinks.removeAll()
+        folders[trashIndex].terminalCommands.removeAll()
+
+        synchronizeWorkspace()
+        isShowingEmptyTrashConfirmation = false
         save()
     }
 
@@ -1365,6 +1650,24 @@ final class SecureWorkspaceStore: ObservableObject {
         } else {
             quickAccessWebLinkIDs.append(webLink.id)
         }
+        synchronizeWorkspace()
+        save()
+    }
+
+    func reorderQuickAccess(movedID: UUID, before targetID: UUID?) {
+        guard !isProcessing,
+              quickAccessWebLinkIDs.contains(movedID),
+              targetID != movedID else { return }
+
+        var reorderedIDs = quickAccessWebLinkIDs
+        reorderedIDs.removeAll { $0 == movedID }
+        if let targetID, let targetIndex = reorderedIDs.firstIndex(of: targetID) {
+            reorderedIDs.insert(movedID, at: targetIndex)
+        } else {
+            reorderedIDs.append(movedID)
+        }
+        guard reorderedIDs != quickAccessWebLinkIDs else { return }
+        quickAccessWebLinkIDs = reorderedIDs
         synchronizeWorkspace()
         save()
     }
@@ -1566,6 +1869,48 @@ final class SecureWorkspaceStore: ObservableObject {
         )
         guard let credentialID else { return nil }
         return credentials.first { $0.id == credentialID }
+    }
+
+    private func keepassEntry(for credential: Credential) -> KeePassXCEntry? {
+        let databasePath = credential.keepassDatabasePath
+        let entryPath = credential.keepassEntryPath
+        guard !databasePath.isEmpty, !entryPath.isEmpty else {
+            errorMessage = "Credential \(credential.name) has no KeePassXC database or entry path."
+            return nil
+        }
+        let password: String
+        if let cached = keepassMasterPasswords[databasePath] {
+            password = cached
+        } else {
+            guard let entered = promptForKeePassMasterPassword(databasePath: databasePath) else { return nil }
+            password = entered
+            keepassMasterPasswords[databasePath] = password
+        }
+        do {
+            return try KeePassXCProvider.readEntry(
+                databaseURL: URL(fileURLWithPath: databasePath),
+                entryPath: entryPath,
+                masterPassword: password
+            )
+        } catch {
+            keepassMasterPasswords[databasePath] = nil
+            errorMessage = error.localizedDescription
+            return nil
+        }
+    }
+
+    private func promptForKeePassMasterPassword(databasePath: String) -> String? {
+        let alert = NSAlert()
+        alert.messageText = "Unlock KeePassXC"
+        alert.informativeText = "Enter the master password for \((databasePath as NSString).lastPathComponent). It is kept only for this GateTree session."
+        alert.addButton(withTitle: "Unlock")
+        alert.addButton(withTitle: "Cancel")
+        let field = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 320, height: 24))
+        field.placeholderString = "KeePassXC master password"
+        alert.accessoryView = field
+        guard alert.runModal() == .alertFirstButtonReturn else { return nil }
+        let password = field.stringValue
+        return password.isEmpty ? nil : password
     }
 
     func isCredentialInUse(_ credentialID: UUID) -> Bool {
@@ -1799,26 +2144,46 @@ struct WorkspaceFolder: Codable, Identifiable, Hashable, Sendable {
     }
 }
 
+enum WebLinkIcon: String, Codable, CaseIterable, Identifiable, Sendable {
+    case icon1 = "icon_1"
+    case icon2 = "icon_2"
+    case icon3 = "icon_3"
+    case icon4 = "icon_4"
+    case icon5 = "icon_5"
+    case icon6 = "icon_6"
+    case icon7 = "icon_7"
+    case icon8 = "icon_8"
+    case icon9 = "icon_9"
+    case icon10 = "icon_10"
+    case icon11 = "icon_11"
+    case icon12 = "icon_12"
+
+    var id: String { rawValue }
+}
+
 struct WebLink: Codable, Identifiable, Hashable, Sendable {
     let id: UUID
     var name: String
     var url: String
     var tags: [String]
+    var icon: WebLinkIcon
 
-    init(id: UUID = UUID(), name: String, url: String, tags: [String] = []) {
+    init(id: UUID = UUID(), name: String, url: String, tags: [String] = [], icon: WebLinkIcon = .icon12) {
         self.id = id
         self.name = name
         self.url = url
         self.tags = tags
+        self.icon = icon
     }
 
-    enum CodingKeys: String, CodingKey { case id, name, url, tags }
+    enum CodingKeys: String, CodingKey { case id, name, url, tags, icon }
     init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         id = try values.decode(UUID.self, forKey: .id)
         name = try values.decode(String.self, forKey: .name)
         url = try values.decode(String.self, forKey: .url)
         tags = try values.decodeIfPresent([String].self, forKey: .tags) ?? []
+        icon = try values.decodeIfPresent(WebLinkIcon.self, forKey: .icon) ?? .icon12
     }
 }
 
@@ -1845,6 +2210,11 @@ struct TerminalCommand: Codable, Identifiable, Hashable, Sendable {
     }
 }
 
+enum ConnectionProtocol: String, Codable, Hashable, Sendable {
+    case ssh
+    case rdp
+}
+
 struct SSHConnection: Codable, Identifiable, Hashable, Sendable {
     let id: UUID
     var name: String
@@ -1853,8 +2223,11 @@ struct SSHConnection: Codable, Identifiable, Hashable, Sendable {
     var port: Int
     var credentialID: UUID?
     var tags: [String]
+    var connectionType: ConnectionProtocol
+    var domain: String
+    var localTunnel: SSHLocalTunnel?
 
-    init(id: UUID = UUID(), name: String, host: String, username: String, port: Int, credentialID: UUID? = nil, tags: [String] = []) {
+    init(id: UUID = UUID(), name: String, host: String, username: String, port: Int, credentialID: UUID? = nil, tags: [String] = [], connectionType: ConnectionProtocol = .ssh, domain: String = "", localTunnel: SSHLocalTunnel? = nil) {
         self.id = id
         self.name = name
         self.host = host
@@ -1862,9 +2235,15 @@ struct SSHConnection: Codable, Identifiable, Hashable, Sendable {
         self.port = port
         self.credentialID = credentialID
         self.tags = tags
+        self.connectionType = connectionType
+        self.domain = domain
+        self.localTunnel = localTunnel
     }
 
-    enum CodingKeys: String, CodingKey { case id, name, host, username, port, credentialID, tags }
+    enum CodingKeys: String, CodingKey {
+        case id, name, host, username, port, credentialID, tags, domain, localTunnel
+        case connectionType = "protocol"
+    }
 
     init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
@@ -1875,18 +2254,53 @@ struct SSHConnection: Codable, Identifiable, Hashable, Sendable {
         port = try values.decode(Int.self, forKey: .port)
         credentialID = try values.decodeIfPresent(UUID.self, forKey: .credentialID)
         tags = try values.decodeIfPresent([String].self, forKey: .tags) ?? []
+        connectionType = try values.decodeIfPresent(ConnectionProtocol.self, forKey: .connectionType) ?? .ssh
+        domain = try values.decodeIfPresent(String.self, forKey: .domain) ?? ""
+        localTunnel = try values.decodeIfPresent(SSHLocalTunnel.self, forKey: .localTunnel)
     }
+}
+
+struct SSHLocalTunnel: Codable, Hashable, Sendable {
+    var localPort: Int
+    var remoteHost: String
+    var remotePort: Int
 }
 
 struct Credential: Codable, Identifiable, Hashable, Sendable {
     let id: UUID
     var name: String
     var username: String
+    var keepassDatabasePath: String
+    var keepassEntryPath: String
 
-    init(id: UUID = UUID(), name: String, username: String) {
+    init(id: UUID = UUID(), name: String, username: String, keepassDatabasePath: String = "", keepassEntryPath: String = "") {
         self.id = id
         self.name = name
         self.username = username
+        self.keepassDatabasePath = keepassDatabasePath
+        self.keepassEntryPath = keepassEntryPath
+    }
+
+    enum CodingKeys: String, CodingKey { case id, name, username, keepassDatabasePath, keepassEntryPath, keepassEntryUUID }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        id = try values.decode(UUID.self, forKey: .id)
+        name = try values.decode(String.self, forKey: .name)
+        username = try values.decodeIfPresent(String.self, forKey: .username) ?? ""
+        keepassDatabasePath = try values.decodeIfPresent(String.self, forKey: .keepassDatabasePath) ?? ""
+        keepassEntryPath = try values.decodeIfPresent(String.self, forKey: .keepassEntryPath)
+            ?? values.decodeIfPresent(String.self, forKey: .keepassEntryUUID)
+            ?? ""
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var values = encoder.container(keyedBy: CodingKeys.self)
+        try values.encode(id, forKey: .id)
+        try values.encode(name, forKey: .name)
+        try values.encode(username, forKey: .username)
+        try values.encode(keepassDatabasePath, forKey: .keepassDatabasePath)
+        try values.encode(keepassEntryPath, forKey: .keepassEntryPath)
     }
 }
 
@@ -1922,55 +2336,6 @@ private struct Workspace: Codable, Sendable {
         credentials = try values.decodeIfPresent([Credential].self, forKey: .credentials) ?? []
         quickAccessWebLinkIDs = try values.decodeIfPresent([UUID].self, forKey: .quickAccessWebLinkIDs) ?? []
     }
-}
-
-private enum CredentialKeychain {
-    private static let service = "com.zsoltkarman.GateTree.credentials"
-
-    static func save(_ password: String, for id: UUID) throws {
-        let query: [CFString: Any] = [
-            kSecClass: kSecClassGenericPassword,
-            kSecAttrService: service,
-            kSecAttrAccount: id.uuidString
-        ]
-        SecItemDelete(query as CFDictionary)
-        guard !password.isEmpty else { return }
-
-        var item = query
-        item[kSecValueData] = Data(password.utf8)
-        let status = SecItemAdd(item as CFDictionary, nil)
-        guard status == errSecSuccess else { throw KeychainError.unexpectedStatus(status) }
-    }
-
-    static func delete(for id: UUID) {
-        let query: [CFString: Any] = [
-            kSecClass: kSecClassGenericPassword,
-            kSecAttrService: service,
-            kSecAttrAccount: id.uuidString
-        ]
-        SecItemDelete(query as CFDictionary)
-    }
-
-    static func password(for id: UUID) throws -> String? {
-        let query: [CFString: Any] = [
-            kSecClass: kSecClassGenericPassword,
-            kSecAttrService: service,
-            kSecAttrAccount: id.uuidString,
-            kSecReturnData: true,
-            kSecMatchLimit: kSecMatchLimitOne
-        ]
-        var result: CFTypeRef?
-        let status = SecItemCopyMatching(query as CFDictionary, &result)
-        if status == errSecItemNotFound { return nil }
-        guard status == errSecSuccess,
-              let data = result as? Data,
-              let password = String(data: data, encoding: .utf8) else {
-            throw KeychainError.unexpectedStatus(status)
-        }
-        return password
-    }
-
-    enum KeychainError: Error { case unexpectedStatus(OSStatus) }
 }
 
 private struct EncryptedWorkspace: Codable {

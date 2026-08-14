@@ -5,13 +5,15 @@ import Foundation
 import SwiftUI
 
 enum AppBuildInfo {
-    static let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.1.0"
+    static let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.2.0"
 
-    static var windowTitle: String {
+    static let windowTitle = "GateTree"
+
+    static var aboutDescription: String {
         #if DEBUG
-        return "GateTree - v\(version) - Local build \(buildTimestamp)"
+        return "Version \(version) · Local build \(buildTimestamp)"
         #else
-        return "GateTree - v\(version)"
+        return "Version \(version)"
         #endif
     }
 

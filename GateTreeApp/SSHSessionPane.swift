@@ -7,22 +7,26 @@ import SwiftUI
 struct SSHSessionPane: View {
     let connection: SSHConnection
     let password: String?
+    let isActive: Bool
     let close: () -> Void
 
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 10) {
-                Image("OracleLinuxServer")
-                    .resizable()
-                    .scaledToFit()
+                Image(systemName: "terminal")
                     .frame(width: 24, height: 24)
-                    .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
+                    .foregroundStyle(.secondary)
                 VStack(alignment: .leading, spacing: 1) {
                     Text(connection.name)
                         .font(.headline)
                     Text("SSH · \(connection.username)@\(connection.host):\(connection.port)")
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                    if let tunnel = connection.localTunnel {
+                        Text("Tunnel · localhost:\(tunnel.localPort) → \(tunnel.remoteHost):\(tunnel.remotePort)")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                 }
                 Button(action: close) {
                     Image(systemName: "xmark")
@@ -36,7 +40,7 @@ struct SSHSessionPane: View {
 
             Divider()
 
-            EmbeddedSSHTerminal(connection: connection, password: password)
+            EmbeddedSSHTerminal(connection: connection, password: password, isActive: isActive)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(Color.black)
         }
@@ -46,13 +50,20 @@ struct SSHSessionPane: View {
 private struct EmbeddedSSHTerminal: NSViewRepresentable {
     let connection: SSHConnection
     let password: String?
+    let isActive: Bool
 
     func makeNSView(context: Context) -> LocalProcessTerminalView {
-        let terminal = LocalProcessTerminalView(frame: .zero)
+        let terminal = GateTreeTerminalView(frame: .zero)
         terminal.font = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
         var arguments = ["-p", String(connection.port)]
         if !connection.username.isEmpty {
             arguments += ["-l", connection.username]
+        }
+        if let tunnel = connection.localTunnel {
+            arguments += [
+                "-o", "ExitOnForwardFailure=yes",
+                "-L", "\(tunnel.localPort):\(tunnel.remoteHost):\(tunnel.remotePort)"
+            ]
         }
         arguments.append(connection.host)
         terminal.startProcess(
@@ -61,13 +72,14 @@ private struct EmbeddedSSHTerminal: NSViewRepresentable {
             environment: askPassEnvironment(password: password),
             execName: nil
         )
-        DispatchQueue.main.async {
-            terminal.window?.makeFirstResponder(terminal)
+        if isActive {
+            DispatchQueue.main.async { terminal.window?.makeFirstResponder(terminal) }
         }
         return terminal
     }
 
     func updateNSView(_ terminal: LocalProcessTerminalView, context: Context) {
+        guard isActive else { return }
         DispatchQueue.main.async {
             if terminal.window?.firstResponder !== terminal {
                 terminal.window?.makeFirstResponder(terminal)
@@ -94,5 +106,50 @@ private struct EmbeddedSSHTerminal: NSViewRepresentable {
         environment.append("DISPLAY=gatetree:0")
         environment.append("GATETREE_SSH_PASSWORD=\(password)")
         return environment
+    }
+}
+
+/// Adds the familiar terminal clipboard interactions on top of SwiftTerm.
+/// A left-button drag selects and copies; right-click provides copy/paste.
+/// Hold Shift while right-clicking when a remote TUI needs the mouse event.
+private final class GateTreeTerminalView: LocalProcessTerminalView {
+    private var didDragWithPrimaryButton = false
+    private var forwardsRightClickToRemote = false
+
+    override func mouseDown(with event: NSEvent) {
+        didDragWithPrimaryButton = false
+        super.mouseDown(with: event)
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        didDragWithPrimaryButton = true
+        super.mouseDragged(with: event)
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        super.mouseUp(with: event)
+        guard didDragWithPrimaryButton, terminal.mouseMode == .off else { return }
+        copy(self)
+    }
+
+    override func rightMouseDown(with event: NSEvent) {
+        window?.makeFirstResponder(self)
+        forwardsRightClickToRemote = event.modifierFlags.contains(.shift)
+        guard !forwardsRightClickToRemote else {
+            super.mouseDown(with: event)
+            return
+        }
+
+        let menu = NSMenu()
+        menu.addItem(withTitle: "Copy", action: #selector(copy(_:)), keyEquivalent: "")
+        menu.addItem(withTitle: "Paste", action: #selector(paste(_:)), keyEquivalent: "")
+        menu.items.forEach { $0.target = self }
+        NSMenu.popUpContextMenu(menu, with: event, for: self)
+    }
+
+    override func rightMouseUp(with event: NSEvent) {
+        guard forwardsRightClickToRemote else { return }
+        super.mouseUp(with: event)
+        forwardsRightClickToRemote = false
     }
 }

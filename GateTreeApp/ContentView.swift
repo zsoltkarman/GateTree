@@ -9,6 +9,19 @@ private func treeItemProvider(_ payload: String) -> NSItemProvider {
     NSItemProvider(object: payload as NSString)
 }
 
+private func chooseKeePassDatabasePath(_ completion: @escaping (String) -> Void) {
+    let panel = NSOpenPanel()
+    panel.title = "Select KeePass Database"
+    panel.message = "Choose a KeePassXC .kdbx database."
+    panel.allowedContentTypes = [UTType(filenameExtension: "kdbx")].compactMap { $0 }
+    panel.canChooseDirectories = false
+    panel.canChooseFiles = true
+    panel.allowsMultipleSelection = false
+    if panel.runModal() == .OK, let url = panel.url {
+        completion(url.path)
+    }
+}
+
 struct ContentView: View {
     @EnvironmentObject private var workspaceStore: SecureWorkspaceStore
     @State private var searchText = ""
@@ -30,6 +43,16 @@ struct ContentView: View {
                                 HStack(spacing: 8) {
                                     TextField("Search connections", text: $searchText)
                                         .textFieldStyle(.roundedBorder)
+
+                                    Button {
+                                        searchText = ""
+                                    } label: {
+                                        Image(systemName: "xmark.circle.fill")
+                                    }
+                                    .buttonStyle(.borderless)
+                                    .foregroundStyle(searchText.isEmpty ? .tertiary : .secondary)
+                                    .disabled(searchText.isEmpty)
+                                    .help("Clear search")
 
                                     Button {
                                         isSearchHelpPresented.toggle()
@@ -79,22 +102,42 @@ struct ContentView: View {
 
                             if workspaceStore.isShowingCredentials {
                                 CredentialsManagerView()
-                            } else if workspaceStore.isShowingCodexResult || !workspaceStore.openSSHConnections.isEmpty || !workspaceStore.openExternalWebLinks.isEmpty {
+                            } else if workspaceStore.isShowingSSHUsernamePrompt || workspaceStore.isShowingRDPUsernamePrompt || workspaceStore.isShowingCodexResult || !workspaceStore.openSSHConnections.isEmpty || !workspaceStore.openRDPConnections.isEmpty || !workspaceStore.openExternalWebLinks.isEmpty {
                                 VStack(spacing: 0) {
                                     SessionTabBar()
-                                    if workspaceStore.isShowingCodexResult {
-                                        CodexResultPane()
-                                    } else if let webLink = workspaceStore.activeExternalWebLink {
-                                        ChromeLinkPane(webLink: webLink)
-                                    } else {
-                                        ZStack {
-                                            ForEach(workspaceStore.openSSHConnections) { connection in
-                                                SSHSessionPane(connection: connection, password: workspaceStore.password(for: connection)) {
+                                    ZStack {
+                                        if workspaceStore.isShowingCodexResult {
+                                            CodexResultPane()
+                                        }
+                                        if let webLink = workspaceStore.activeExternalWebLink {
+                                            ChromeLinkPane(webLink: webLink)
+                                                .zIndex(2)
+                                        }
+                                        ForEach(workspaceStore.openSSHConnections) { connection in
+                                                SSHSessionPane(
+                                                    connection: connection,
+                                                    password: workspaceStore.password(for: connection),
+                                                    isActive: workspaceStore.activeSessionProtocol == .ssh && workspaceStore.activeSessionID == connection.id
+                                                ) {
                                                     workspaceStore.closeSSHConnection(connection.id)
                                                 }
-                                                .opacity(workspaceStore.selectedSSHConnection?.id == connection.id ? 1 : 0)
-                                                .allowsHitTesting(workspaceStore.selectedSSHConnection?.id == connection.id)
+                                                .opacity(workspaceStore.activeSessionProtocol == .ssh && workspaceStore.activeSessionID == connection.id ? 1 : 0)
+                                                .allowsHitTesting(workspaceStore.activeSessionProtocol == .ssh && workspaceStore.activeSessionID == connection.id)
                                             }
+                                        ForEach(workspaceStore.openRDPConnections) { connection in
+                                                RDPConnectionPane(connection: connection, password: workspaceStore.rdpPassword(for: connection)) {
+                                                    workspaceStore.closeRDPConnection(connection.id)
+                                                }
+                                                .opacity(workspaceStore.activeSessionProtocol == .rdp && workspaceStore.activeSessionID == connection.id ? 1 : 0)
+                                                .allowsHitTesting(workspaceStore.activeSessionProtocol == .rdp && workspaceStore.activeSessionID == connection.id)
+                                        }
+
+                                        if workspaceStore.isShowingSSHUsernamePrompt {
+                                            SSHUsernamePrompt()
+                                                .zIndex(1)
+                                        } else if workspaceStore.isShowingRDPUsernamePrompt || workspaceStore.isPromptingRDPPassword {
+                                            RDPUsernamePrompt()
+                                                .zIndex(1)
                                         }
                                     }
                                 }
@@ -160,6 +203,14 @@ struct ContentView: View {
             SSHConnectionForm()
                 .environmentObject(workspaceStore)
         }
+        .sheet(isPresented: $workspaceStore.isShowingRDPConnectionCreation) {
+            RDPConnectionForm()
+                .environmentObject(workspaceStore)
+        }
+        .sheet(isPresented: $workspaceStore.isShowingRDPConnectionEditor) {
+            RDPConnectionEditorForm()
+                .environmentObject(workspaceStore)
+        }
         .sheet(isPresented: $workspaceStore.isShowingWebLinkCreation) {
             WebLinkForm()
                 .environmentObject(workspaceStore)
@@ -178,10 +229,6 @@ struct ContentView: View {
         }
         .sheet(isPresented: $workspaceStore.isShowingSSHConnectionEditor) {
             SSHConnectionEditorForm()
-                .environmentObject(workspaceStore)
-        }
-        .sheet(isPresented: $workspaceStore.isShowingSSHUsernamePrompt) {
-            SSHUsernamePrompt()
                 .environmentObject(workspaceStore)
         }
         .sheet(isPresented: $workspaceStore.isShowingCredentialCreation) {
@@ -209,6 +256,18 @@ struct ContentView: View {
             Text("This cannot be undone.")
         }
         .confirmationDialog(
+            "Empty Trash?",
+            isPresented: $workspaceStore.isShowingEmptyTrashConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Empty Trash", role: .destructive) {
+                workspaceStore.emptyTrash()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("All items in Trash will be permanently deleted. This cannot be undone.")
+        }
+        .confirmationDialog(
             "Delete connection?",
             isPresented: $workspaceStore.isShowingSSHConnectionDeletionConfirmation,
             titleVisibility: .visible
@@ -230,7 +289,7 @@ struct ContentView: View {
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("The saved password will also be removed from macOS Keychain.")
+            Text("The KeePassXC credential reference will be removed from GateTree.")
         }
         .sheet(isPresented: $workspaceStore.isShowingHelp) {
             GateTreeAboutView()
@@ -293,14 +352,22 @@ private struct SearchHelpView: View {
             VStack(alignment: .leading, spacing: 5) {
                 Text("Examples")
                     .font(.subheadline.weight(.semibold))
-                Text("• sauron fra api — all FRA Sauron APIs")
-                Text("• sauron iad iad1 thanos — the IAD1 Thanos link")
-                Text("• ssh giu icprod fra kafka — FRA Kafka servers")
-                Text("• ssh ohai cernfr cache — CERN FR cache servers")
+                Text("• region api — all API links for a region")
+                Text("• region monitoring — a monitoring link for a region")
+                Text("• production kafka — Kafka servers in production")
+                Text("• europe cache — Cache servers in Europe")
             }
             .font(.callout)
 
             Text("Tags include site, region, instance, and service or server role.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+
+            Label("Use the × button beside the search field to clear the current search.", systemImage: "xmark.circle.fill")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+
+            Label("Search results are grouped by their folder path, so repeated names remain easy to distinguish.", systemImage: "rectangle.3.group")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
 
@@ -315,27 +382,37 @@ private struct GateTreeAboutView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Label("About GateTree", systemImage: "tree")
+            Label("GateTree Help", systemImage: "tree")
                 .font(.title2.weight(.semibold))
 
-            Text("GateTree is a local macOS workspace for organizing SSH servers, credentials, commands, and operational web links in one connection tree.")
+            Text("GateTree is a local macOS workspace for organizing SSH and RDP connections, credentials, commands, and operational web links in one connection tree.")
                 .fixedSize(horizontal: false, vertical: true)
 
             Text("Built with Swift and SwiftUI for macOS.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
 
+            Text(AppBuildInfo.aboutDescription)
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+
             VStack(alignment: .leading, spacing: 6) {
-                Text("Features").font(.headline)
-                Text("• Folder-based SSH and web bookmark management")
-                Text("• Native SSH session tabs and macOS Keychain credentials")
-                Text("• Tags and multi-word search for sites, services, regions, and instances")
-                Text("• Chrome tab tracking for SSO-protected operational links")
+                Text("Working with GateTree").font(.headline)
+                Text("• Double-click an SSH connection to open it in a session tab.")
+                Text("• In an SSH session, drag with the left mouse button to select and copy text. Right-click the terminal for Copy and Paste; use Shift-right-click to send a mouse event to a remote terminal application.")
+                Text("• Double-click an RDP connection to open a separate embedded RDP tab. It stays open alongside SSH session tabs; Terminal and X11 are not used.")
+                Text("• For RDP, assign a KeePassXC credential or enter a username and masked password in the tab. Paste is supported. Use DOMAIN\\username, or fill Username and Domain separately.")
+                Text("• Double-click a URL or select it from Quick Access to open or focus its Google Chrome tab.")
+                Text("• Choose a bookmark icon when creating or editing a URL; the selected icon is saved with that bookmark.")
+                Text("• Right-click a URL and choose Add to Quick Access to pin it to the top bar.")
+                Text("• Drag Quick Access items left or right to set their saved order.")
+                Text("• Use the search field to filter by name, address, or tag. Results are grouped by folder path, so repeated service names remain distinguishable; the × icon clears the search.")
+                Text("• Right-click a folder and choose New Folder to create a child folder. The destination folder stays expanded so the new item remains visible.")
+                Text("• Right-click an item and choose Move to Trash. Right-click Trash and choose Empty Trash… to permanently delete its contents.")
+                Text("• KeePassXC credential references can be inherited by child SSH and RDP connections.")
+                Text("• When creating a KeePassXC credential, choose the .kdbx file and enter the entry path: its group path plus entry title. A copied full Group Path (for example /Operations/...) or a root-relative path both work.")
             }
             .font(.callout)
-
-            Text("Created by Zsolt Karman")
-                .font(.headline)
 
             HStack {
                 Spacer()
@@ -376,10 +453,31 @@ private struct SessionTabBar: View {
                     .padding(.horizontal, 8)
                     .padding(.vertical, 6)
                     .background(
-                        workspaceStore.selectedSSHConnection?.id == connection.id
+                        workspaceStore.activeSessionProtocol == .ssh && workspaceStore.activeSessionID == connection.id
                             ? Color.accentColor.opacity(0.25)
                             : Color.secondary.opacity(0.10)
                     )
+                    .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
+                }
+                ForEach(workspaceStore.openRDPConnections) { connection in
+                    HStack(spacing: 5) {
+                        Button {
+                            workspaceStore.isShowingCodexResult = false
+                            workspaceStore.selectOpenRDPConnection(connection)
+                        } label: {
+                            Label(connection.name, systemImage: "rectangle.inset.filled")
+                                .lineLimit(1)
+                        }
+                        .buttonStyle(.plain)
+                        Button { workspaceStore.closeRDPConnection(connection.id) } label: {
+                            Image(systemName: "xmark").font(.system(size: 9, weight: .semibold))
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    .font(.system(size: 12))
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 6)
+                    .background(workspaceStore.activeSessionProtocol == .rdp && workspaceStore.activeSessionID == connection.id ? Color.accentColor.opacity(0.25) : Color.secondary.opacity(0.10))
                     .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
                 }
                 ForEach(workspaceStore.openExternalWebLinks) { webLink in
@@ -388,8 +486,7 @@ private struct SessionTabBar: View {
                             workspaceStore.isShowingCodexResult = false
                             workspaceStore.selectOpenExternalWebLink(webLink)
                         } label: {
-                            Label(webLink.name, systemImage: "globe")
-                                .lineLimit(1)
+                            WebLinkTitle(webLink: webLink)
                         }
                         .buttonStyle(.plain)
                         Button {
@@ -445,9 +542,7 @@ private struct ChromeLinkPane: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 10) {
-                Image(systemName: "globe")
-                    .font(.title3)
-                    .foregroundStyle(.tint)
+                WebServiceIcon(icon: webLink.icon, size: 18)
                 VStack(alignment: .leading, spacing: 3) {
                     Text(webLink.name).font(.headline)
                     Text(webLink.url).font(.caption).foregroundStyle(.secondary).lineLimit(1)
@@ -558,7 +653,7 @@ private struct HostInspector: View {
                 .padding(8)
             } else if let webLink = workspaceStore.selectedWebLinkForInspector {
                 VStack(alignment: .leading, spacing: 3) {
-                    Label(webLink.name, systemImage: "globe")
+                    WebLinkTitle(webLink: webLink)
                         .font(.system(size: 12, weight: .medium))
                     InspectorRow(label: "Type", value: "Web bookmark")
                     InspectorRow(label: "URL", value: webLink.url)
@@ -637,12 +732,26 @@ private func matchesSearch(_ values: [String], query: String) -> Bool {
     guard !terms.isEmpty else { return true }
 
     return terms.allSatisfy { term in
-        values.contains { $0.localizedCaseInsensitiveContains(term) }
+        let normalizedTerm = normalizedURLForSearch(term)
+        return values.contains { value in
+            value.localizedCaseInsensitiveContains(term) ||
+            normalizedURLForSearch(value).localizedCaseInsensitiveContains(normalizedTerm)
+        }
     }
 }
 
+private func normalizedURLForSearch(_ value: String) -> String {
+    let trimmedValue = value.trimmingCharacters(in: .whitespacesAndNewlines)
+    let lowercasedValue = trimmedValue.lowercased()
+    guard lowercasedValue.hasPrefix("http://") || lowercasedValue.hasPrefix("https://") else {
+        return trimmedValue
+    }
+
+    return trimmedValue.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+}
+
 private func sshMatchesSearch(_ connection: SSHConnection, query: String) -> Bool {
-    matchesSearch([connection.name, connection.host, connection.username, String(connection.port)] + connection.tags, query: query)
+    matchesSearch([connection.name, connection.host, connection.username, connection.domain, connection.connectionType.rawValue, String(connection.port)] + connection.tags, query: query)
 }
 
 private func webLinkMatchesSearch(_ webLink: WebLink, query: String) -> Bool {
@@ -732,12 +841,6 @@ private struct FolderList: View {
     let searchText: String
 
     private var isFiltering: Bool { !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-    private var hasResults: Bool {
-        workspaceStore.folders.contains { folderMatchesSearch($0, query: searchText) } ||
-        workspaceStore.rootConnections.contains { sshMatchesSearch($0, query: searchText) } ||
-        workspaceStore.rootWebLinks.contains { webLinkMatchesSearch($0, query: searchText) } ||
-        workspaceStore.rootTerminalCommands.contains { terminalCommandMatchesSearch($0, query: searchText) }
-    }
     private var navigationItems: [TreeNavigationItem] {
         treeNavigationItems(
             folders: workspaceStore.folders,
@@ -751,11 +854,8 @@ private struct FolderList: View {
 
     var body: some View {
         List {
-            if isFiltering && !hasResults {
-                ContentUnavailableView(
-                    "No matches",
-                    systemImage: "magnifyingglass",
-                    description: Text("Try a connection name, host, URL or terminal command."))
+            if isFiltering {
+                GroupedSearchResults(query: searchText)
             } else if workspaceStore.folders.isEmpty && workspaceStore.rootConnections.isEmpty && workspaceStore.rootWebLinks.isEmpty && workspaceStore.rootTerminalCommands.isEmpty {
                 ContentUnavailableView(
                     "No folders",
@@ -768,19 +868,28 @@ private struct FolderList: View {
             }
 
             ForEach(workspaceStore.rootConnections.filter { !isFiltering || sshMatchesSearch($0, query: searchText) }) { connection in
-                SSHConnectionLabel(name: connection.name)
-                    .help("SSH: \(connection.host):\(connection.port)")
+                ConnectionLabel(connection: connection)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
+                    .help("\(connection.connectionType == .rdp ? "RDP" : "SSH"): \(connection.host):\(connection.port)")
                     .listRowInsets(EdgeInsets(top: 1, leading: 8, bottom: 1, trailing: 6))
                     .listRowBackground(treeSelectionBackground(for: connection.id))
                     .simultaneousGesture(TapGesture().onEnded {
                         workspaceStore.selectTreeItem(connection.id)
                     })
                     .onTapGesture(count: 2) {
-                        workspaceStore.selectSSHConnection(connection)
+                        if connection.connectionType == .rdp {
+                            workspaceStore.launchRDPConnection(connection)
+                        } else {
+                            workspaceStore.selectSSHConnection(connection)
+                        }
                     }
                     .contextMenu {
-                        Button("Edit…") {
-                            workspaceStore.showSSHConnectionEditor(connection)
+                        if connection.connectionType == .ssh {
+                            Button("Edit…") { workspaceStore.showSSHConnectionEditor(connection) }
+                        } else {
+                            Button("Edit…") { workspaceStore.showRDPConnectionEditor(connection) }
+                            Button("Open RDP") { workspaceStore.launchRDPConnection(connection) }
                         }
                         Divider()
                         Button("Delete…", role: .destructive) {
@@ -791,7 +900,7 @@ private struct FolderList: View {
             }
 
             ForEach(workspaceStore.rootWebLinks.filter { !isFiltering || webLinkMatchesSearch($0, query: searchText) }) { webLink in
-                WebLinkLabel(name: webLink.name, url: webLink.url)
+                WebLinkTitle(webLink: webLink)
                     .help(webLink.url)
                     .listRowInsets(EdgeInsets(top: 1, leading: 8, bottom: 1, trailing: 6))
                     .listRowBackground(treeSelectionBackground(for: webLink.id))
@@ -828,6 +937,7 @@ private struct FolderList: View {
         .contextMenu {
             Menu("New Connection") {
                 Button("Server (SSH)") { workspaceStore.showSSHConnectionCreation() }
+                Button("Remote Desktop (RDP)") { workspaceStore.showRDPConnectionCreation() }
                 Button("URL") { workspaceStore.showWebLinkCreation() }
                 Button("Terminal") { workspaceStore.showTerminalCommandCreation() }
             }
@@ -888,6 +998,145 @@ private struct FolderList: View {
     }
 }
 
+private struct SearchResultGroup: Identifiable {
+    let id: String
+    let title: String
+    let path: String
+    let connections: [SSHConnection]
+    let webLinks: [WebLink]
+    let terminalCommands: [TerminalCommand]
+}
+
+private func groupedSearchResults(
+    folders: [WorkspaceFolder],
+    rootConnections: [SSHConnection],
+    rootWebLinks: [WebLink],
+    rootTerminalCommands: [TerminalCommand],
+    query: String
+) -> [SearchResultGroup] {
+    var groups: [SearchResultGroup] = []
+
+    let rootConnections = rootConnections.filter { sshMatchesSearch($0, query: query) }
+    let rootWebLinks = rootWebLinks.filter { webLinkMatchesSearch($0, query: query) }
+    let rootTerminalCommands = rootTerminalCommands.filter { terminalCommandMatchesSearch($0, query: query) }
+    if !rootConnections.isEmpty || !rootWebLinks.isEmpty || !rootTerminalCommands.isEmpty {
+        groups.append(SearchResultGroup(id: "root", title: "Root", path: "Workspace", connections: rootConnections, webLinks: rootWebLinks, terminalCommands: rootTerminalCommands))
+    }
+
+    func appendGroups(_ folders: [WorkspaceFolder], path: [String]) {
+        for folder in folders {
+            let folderPath = path + [folder.name]
+            let connections = folder.connections.filter { sshMatchesSearch($0, query: query) }
+            let webLinks = folder.webLinks.filter { webLinkMatchesSearch($0, query: query) }
+            let terminalCommands = folder.terminalCommands.filter { terminalCommandMatchesSearch($0, query: query) }
+            if !connections.isEmpty || !webLinks.isEmpty || !terminalCommands.isEmpty {
+                groups.append(SearchResultGroup(id: folder.id.uuidString, title: folder.name, path: folderPath.joined(separator: " / "), connections: connections, webLinks: webLinks, terminalCommands: terminalCommands))
+            }
+            appendGroups(folder.children, path: folderPath)
+        }
+    }
+    appendGroups(folders, path: [])
+    return groups
+}
+
+private struct GroupedSearchResults: View {
+    @EnvironmentObject private var workspaceStore: SecureWorkspaceStore
+    let query: String
+
+    private var groups: [SearchResultGroup] {
+        groupedSearchResults(
+            folders: workspaceStore.folders,
+            rootConnections: workspaceStore.rootConnections,
+            rootWebLinks: workspaceStore.rootWebLinks,
+            rootTerminalCommands: workspaceStore.rootTerminalCommands,
+            query: query
+        )
+    }
+
+    var body: some View {
+        if groups.isEmpty {
+            ContentUnavailableView("No matches", systemImage: "magnifyingglass", description: Text("Try a connection name, host, URL or terminal command."))
+        } else {
+            ForEach(groups) { group in
+                HStack(spacing: 6) {
+                    Text(group.title)
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundStyle(.blue)
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 3)
+                        .background(.blue.opacity(0.10), in: Capsule())
+                    Text(group.path)
+                        .font(.system(size: 9))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+                .listRowInsets(EdgeInsets(top: 7, leading: 8, bottom: 3, trailing: 6))
+
+                ForEach(group.connections) { connection in
+                    HStack(spacing: 6) {
+                        ConnectionLabel(connection: connection)
+                        Spacer(minLength: 0)
+                        Text(connection.host)
+                            .font(.system(size: 9))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                    .frame(height: 20)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(Color(nsColor: .labelColor))
+                    .contentShape(Rectangle())
+                    .listRowInsets(EdgeInsets(top: 1, leading: 14, bottom: 1, trailing: 6))
+                    .listRowBackground(workspaceStore.selectedTreeItemIDs.contains(connection.id) ? Color.accentColor.opacity(0.72) : .clear)
+                    .onTapGesture { workspaceStore.selectTreeItem(connection.id) }
+                    .onTapGesture(count: 2) {
+                        if connection.connectionType == .rdp {
+                            workspaceStore.launchRDPConnection(connection)
+                        } else {
+                            workspaceStore.selectSSHConnection(connection)
+                        }
+                    }
+                    .contextMenu {
+                        if connection.connectionType == .rdp {
+                            Button("Edit…") { workspaceStore.showRDPConnectionEditor(connection) }
+                            Button("Open RDP") { workspaceStore.launchRDPConnection(connection) }
+                        } else {
+                            Button("Edit…") { workspaceStore.showSSHConnectionEditor(connection) }
+                        }
+                        Divider()
+                        Button("Move to Trash", role: .destructive) {
+                            workspaceStore.moveSSHConnectionToTrash(connection.id)
+                        }
+                    }
+                }
+
+                ForEach(group.webLinks) { webLink in
+                    WebLinkTitle(webLink: webLink)
+                        .frame(height: 20)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(Color(nsColor: .labelColor))
+                        .contentShape(Rectangle())
+                        .listRowInsets(EdgeInsets(top: 1, leading: 14, bottom: 1, trailing: 6))
+                        .listRowBackground(workspaceStore.selectedTreeItemIDs.contains(webLink.id) ? Color.accentColor.opacity(0.72) : .clear)
+                        .onTapGesture { workspaceStore.selectTreeItem(webLink.id) }
+                        .onTapGesture(count: 2) { workspaceStore.selectWebLink(webLink) }
+                }
+
+                ForEach(group.terminalCommands) { command in
+                    TerminalCommandLabel(name: command.name)
+                        .frame(height: 20)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(Color(nsColor: .labelColor))
+                        .contentShape(Rectangle())
+                        .listRowInsets(EdgeInsets(top: 1, leading: 14, bottom: 1, trailing: 6))
+                        .listRowBackground(workspaceStore.selectedTreeItemIDs.contains(command.id) ? Color.accentColor.opacity(0.72) : .clear)
+                        .onTapGesture { workspaceStore.selectTreeItem(command.id) }
+                        .onTapGesture(count: 2) { workspaceStore.launchTerminalCommand(command) }
+                }
+            }
+        }
+    }
+}
+
 private struct QuickAccessBar: View {
     @EnvironmentObject private var workspaceStore: SecureWorkspaceStore
 
@@ -909,7 +1158,7 @@ private struct QuickAccessBar: View {
                             Button {
                                 workspaceStore.selectWebLink(webLink)
                             } label: {
-                                Label(webLink.name, systemImage: "globe")
+                                WebLinkTitle(webLink: webLink)
                                     .lineLimit(1)
                                     .font(.system(size: 11, weight: .medium))
                                     .padding(.horizontal, 7)
@@ -917,7 +1166,12 @@ private struct QuickAccessBar: View {
                             }
                             .buttonStyle(.bordered)
                             .help(webLink.url)
+                            .onDrag { treeItemProvider("quickaccess:\(webLink.id.uuidString)") }
+                            .onDrop(of: [.text], delegate: QuickAccessDropDelegate(targetID: webLink.id, store: workspaceStore))
                         }
+                        Color.clear
+                            .frame(width: 14, height: 28)
+                            .onDrop(of: [.text], delegate: QuickAccessDropDelegate(targetID: nil, store: workspaceStore))
                     }
                 }
             }
@@ -938,7 +1192,7 @@ private struct CredentialsManagerView: View {
                 VStack(alignment: .leading, spacing: 3) {
                     Text("Credentials")
                         .font(.title2.weight(.semibold))
-                    Text("Passwords are stored in macOS Keychain, not in the workspace file.")
+                    Text("Credentials are resolved from KeePassXC; GateTree stores only the database path and entry path.")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                 }
@@ -967,7 +1221,7 @@ private struct CredentialsManagerView: View {
                             .foregroundStyle(.tint)
                         VStack(alignment: .leading, spacing: 2) {
                             Text(credential.name)
-                            Text(credential.username)
+                            Text("KeePassXC · \(credential.keepassEntryPath)")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                             if workspaceStore.isCredentialInUse(credential.id) {
@@ -999,8 +1253,8 @@ private struct CredentialsManagerView: View {
 private struct CredentialForm: View {
     @EnvironmentObject private var workspaceStore: SecureWorkspaceStore
     @State private var name = ""
-    @State private var username = ""
-    @State private var password = ""
+    @State private var databasePath = ""
+    @State private var entryPath = ""
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -1008,21 +1262,24 @@ private struct CredentialForm: View {
                 .font(.title2.weight(.semibold))
             TextField("Name", text: $name)
                 .textFieldStyle(.roundedBorder)
-            TextField("Username", text: $username)
+            HStack {
+                TextField("KeePass database (.kdbx)", text: $databasePath)
+                    .textFieldStyle(.roundedBorder)
+                Button("Choose…") { chooseKeePassDatabasePath { databasePath = $0 } }
+            }
+            TextField("KeePass entry path (for example: Accounts/Operations/User/entry-title)", text: $entryPath)
                 .textFieldStyle(.roundedBorder)
-            SecureField("Password (stored in Keychain)", text: $password)
-                .textFieldStyle(.roundedBorder)
-            Text("Leave the password blank for a username-only credential.")
+            Text("Use the group path plus the entry title — not the KeePass Username. GateTree accepts either the full path shown by KeePassXC or the root-relative path.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
             HStack {
                 Button("Cancel") { workspaceStore.cancelCredentialCreation() }
                 Spacer()
                 Button("Add Credential") {
-                    workspaceStore.createCredential(name: name, username: username, password: password)
+                    workspaceStore.createCredential(name: name, username: "", databasePath: databasePath, entryPath: entryPath)
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || username.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || databasePath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || entryPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
         }
         .padding(24)
@@ -1043,7 +1300,7 @@ private struct CredentialAssignmentForm: View {
             Picker("Credential", selection: $workspaceStore.selectedCredentialAssignmentID) {
                 Text("Inherit / remove override").tag(UUID?.none)
                 ForEach(workspaceStore.credentials) { credential in
-                    Text("\(credential.name) (\(credential.username))").tag(Optional(credential.id))
+                    Text(credential.name).tag(Optional(credential.id))
                 }
             }
             HStack {
@@ -1061,8 +1318,8 @@ private struct CredentialAssignmentForm: View {
 private struct CredentialEditorForm: View {
     @EnvironmentObject private var workspaceStore: SecureWorkspaceStore
     @State private var name = ""
-    @State private var username = ""
-    @State private var password = ""
+    @State private var databasePath = ""
+    @State private var entryPath = ""
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -1070,29 +1327,33 @@ private struct CredentialEditorForm: View {
                 .font(.title2.weight(.semibold))
             TextField("Name", text: $name)
                 .textFieldStyle(.roundedBorder)
-            TextField("Username", text: $username)
+            HStack {
+                TextField("KeePass database (.kdbx)", text: $databasePath)
+                    .textFieldStyle(.roundedBorder)
+                Button("Choose…") { chooseKeePassDatabasePath { databasePath = $0 } }
+            }
+            TextField("KeePass entry path (for example: Accounts/Operations/User/entry-title)", text: $entryPath)
                 .textFieldStyle(.roundedBorder)
-            SecureField("New password (optional)", text: $password)
-                .textFieldStyle(.roundedBorder)
-            Text("Leave the password empty to keep the existing Keychain password.")
+            Text("Use the group path plus the entry title — not the KeePass Username. The password stays in KeePassXC and is never saved by GateTree.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
             HStack {
                 Button("Cancel") { workspaceStore.cancelCredentialEditor() }
                 Spacer()
                 Button("Save") {
-                    workspaceStore.updateCredential(name: name, username: username, newPassword: password)
+                    workspaceStore.updateCredential(name: name, username: "", databasePath: databasePath, entryPath: entryPath)
                 }
                 .buttonStyle(.borderedProminent)
                 .keyboardShortcut(.defaultAction)
-                .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || username.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || databasePath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || entryPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
         }
         .padding(24)
         .frame(width: 360)
         .onAppear {
             name = workspaceStore.editingCredential?.name ?? ""
-            username = workspaceStore.editingCredential?.username ?? ""
+            databasePath = workspaceStore.editingCredential?.keepassDatabasePath ?? ""
+            entryPath = workspaceStore.editingCredential?.keepassEntryPath ?? ""
         }
     }
 }
@@ -1102,32 +1363,128 @@ private struct SSHConnectionLabel: View {
 
     var body: some View {
         HStack(spacing: 5) {
-            Image("OracleLinuxServer")
-                .resizable()
-                .scaledToFit()
+            Image(systemName: "terminal")
                 .frame(width: 16, height: 16)
-                .clipShape(RoundedRectangle(cornerRadius: 3, style: .continuous))
+                .foregroundStyle(.secondary)
             Text(name)
         }
         .frame(height: 18)
     }
 }
 
-private struct WebLinkLabel: View {
-    let name: String
-    let url: String
-
-    private var iconName: String {
-        if url.contains("thanos-rule.") { return "checkmark.seal" }
-        if url.contains("thanos.") { return "chart.xyaxis.line" }
-        if url.contains("shuttleproxy.") { return "arrow.triangle.swap" }
-        if url.contains("api.") { return "network" }
-        return "arrow.up.right.square"
-    }
+private struct ConnectionLabel: View {
+    let connection: SSHConnection
 
     var body: some View {
-        Label(name, systemImage: iconName)
-            .frame(height: 18)
+        if connection.connectionType == .rdp {
+            Label(connection.name, systemImage: "display")
+                .symbolRenderingMode(.hierarchical)
+                .foregroundStyle(.blue)
+                .frame(height: 18)
+        } else {
+            SSHConnectionLabel(name: connection.name)
+        }
+    }
+}
+
+private extension WebLinkIcon {
+    var iconName: String {
+        switch self {
+        case .icon1: return "diamond.fill"
+        case .icon2: return "text.alignleft"
+        case .icon3: return "rectangle.3.group.fill"
+        case .icon4: return "chevron.left.forwardslash.chevron.right"
+        case .icon5: return "bell.badge.fill"
+        case .icon6: return "gauge.with.dots.needle.50percent"
+        case .icon7: return "flame.fill"
+        case .icon8: return "checkmark.seal"
+        case .icon9: return "chart.xyaxis.line"
+        case .icon10: return "arrow.triangle.branch"
+        case .icon11: return "questionmark.circle.fill"
+        case .icon12: return "globe"
+        }
+    }
+
+    var color: Color {
+        switch self {
+        case .icon1: return Color(red: 0.0, green: 0.32, blue: 0.78)
+        case .icon2: return Color(red: 0.09, green: 0.46, blue: 0.89)
+        case .icon3: return .cyan
+        case .icon4: return .indigo
+        case .icon5: return .red
+        case .icon6: return .orange
+        case .icon7: return Color(red: 0.82, green: 0.18, blue: 0.08)
+        case .icon8, .icon9: return .purple
+        case .icon10: return .teal
+        case .icon11: return .gray
+        case .icon12: return .primary
+        }
+    }
+}
+
+private struct WebServiceIcon: View {
+    let icon: WebLinkIcon
+    var size: CGFloat = 13
+
+    var body: some View {
+        Image(systemName: icon.iconName)
+            .font(.system(size: size, weight: .semibold))
+            .foregroundStyle(icon.color)
+    }
+}
+
+private struct WebLinkIconPicker: View {
+    @Binding var icon: WebLinkIcon
+    @State private var isPresented = false
+
+    var body: some View {
+        HStack {
+            Text("Icon")
+            Spacer()
+            Button {
+                isPresented.toggle()
+            } label: {
+                HStack(spacing: 4) {
+                    WebServiceIcon(icon: icon, size: 16)
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                }
+                .frame(width: 42, height: 22)
+            }
+            .buttonStyle(.borderless)
+            .popover(isPresented: $isPresented, arrowEdge: .bottom) {
+                LazyVGrid(columns: Array(repeating: GridItem(.fixed(34)), count: 4), spacing: 6) {
+                    ForEach(WebLinkIcon.allCases) { candidate in
+                        Button {
+                            icon = candidate
+                            isPresented = false
+                        } label: {
+                            WebServiceIcon(icon: candidate, size: 17)
+                                .frame(width: 30, height: 30)
+                                .background(icon == candidate ? Color.accentColor.opacity(0.22) : .clear)
+                                .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel(candidate.rawValue)
+                    }
+                }
+                .padding(10)
+            }
+        }
+    }
+}
+
+private struct WebLinkTitle: View {
+    let webLink: WebLink
+
+    var body: some View {
+        HStack(spacing: 5) {
+            WebServiceIcon(icon: webLink.icon)
+            Text(webLink.name)
+                .foregroundStyle(.primary)
+        }
+        .frame(height: 18)
     }
 }
 
@@ -1214,8 +1571,7 @@ private struct EmbeddedWebPane: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 8) {
-                Image(systemName: "globe")
-                    .foregroundStyle(.tint)
+                WebServiceIcon(icon: webLink.icon)
                 VStack(alignment: .leading, spacing: 1) {
                     Text(webLink.name).font(.headline)
                     Text(webLink.url).font(.caption).foregroundStyle(.secondary).lineLimit(1)
@@ -1256,6 +1612,7 @@ private struct FolderTreeRow: View {
     let folder: WorkspaceFolder
     let depth: Int
     let searchText: String
+    @State private var isExpandedWhileFiltering = true
 
     private var isFiltering: Bool { !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
     private var matchingConnections: [SSHConnection] { folder.connections.filter { !isFiltering || sshMatchesSearch($0, query: searchText) } }
@@ -1263,7 +1620,7 @@ private struct FolderTreeRow: View {
     private var matchingTerminalCommands: [TerminalCommand] { folder.terminalCommands.filter { !isFiltering || terminalCommandMatchesSearch($0, query: searchText) } }
     private var matchingChildren: [WorkspaceFolder] { folder.children.filter { !isFiltering || folderMatchesSearch($0, query: searchText) } }
     private var hasContents: Bool { !matchingChildren.isEmpty || !matchingConnections.isEmpty || !matchingWebLinks.isEmpty || !matchingTerminalCommands.isEmpty }
-    private var isExpanded: Bool { isFiltering ? hasContents : workspaceStore.isFolderExpanded(folder.id) }
+    private var isExpanded: Bool { isFiltering ? hasContents && isExpandedWhileFiltering : workspaceStore.isFolderExpanded(folder.id) }
 
     var body: some View {
         Group {
@@ -1271,7 +1628,11 @@ private struct FolderTreeRow: View {
                 TreeIndentation(depth: depth)
                 if hasContents {
                     Button {
-                        workspaceStore.toggleFolderExpanded(folder.id)
+                        if isFiltering {
+                            isExpandedWhileFiltering.toggle()
+                        } else {
+                            workspaceStore.toggleFolderExpanded(folder.id)
+                        }
                     } label: {
                         Image(systemName: isExpanded ? "minus.square" : "plus.square")
                             .font(.system(size: 11))
@@ -1279,8 +1640,7 @@ private struct FolderTreeRow: View {
                             .frame(width: 12)
                     }
                     .buttonStyle(.plain)
-                    .disabled(isFiltering)
-                    .help(isFiltering ? "Clear search to change the folder expansion state." : "Expand or collapse folder")
+                    .help("Expand or collapse folder")
                 } else {
                     Color.clear.frame(width: 12, height: 1)
                 }
@@ -1309,37 +1669,51 @@ private struct FolderTreeRow: View {
                 }
             }
             .contextMenu {
-                Button("Edit…") {
-                    workspaceStore.showFolderEditor(folder)
+                if workspaceStore.isTrashFolder(folder) {
+                    Button("Empty Trash…", role: .destructive) {
+                        workspaceStore.showEmptyTrashConfirmation(folder)
+                    }
+                    .disabled(folder.children.isEmpty && folder.connections.isEmpty && folder.webLinks.isEmpty && folder.terminalCommands.isEmpty)
+                } else {
+                    Button("Edit…") {
+                        workspaceStore.showFolderEditor(folder)
+                    }
+                    Divider()
+                    Menu("New Connection") {
+                        Button("Server (SSH)") { workspaceStore.showSSHConnectionCreation(in: folder) }
+                        Button("Remote Desktop (RDP)") { workspaceStore.showRDPConnectionCreation(in: folder) }
+                        Button("URL") { workspaceStore.showWebLinkCreation(in: folder) }
+                        Button("Terminal") { workspaceStore.showTerminalCommandCreation(in: folder) }
+                    }
+                    Button("New Folder") {
+                        workspaceStore.showFolderCreation(parentID: folder.id)
+                    }
+                    Divider()
+                    Button("Delete…", role: .destructive) {
+                        workspaceStore.showFolderDeletionConfirmation(folder)
+                    }
+                    .disabled(!folder.children.isEmpty || !folder.connections.isEmpty || !folder.webLinks.isEmpty || !folder.terminalCommands.isEmpty)
                 }
-                Divider()
-                Menu("New Connection") {
-                    Button("Server (SSH)") { workspaceStore.showSSHConnectionCreation(in: folder) }
-                    Button("URL") { workspaceStore.showWebLinkCreation(in: folder) }
-                    Button("Terminal") { workspaceStore.showTerminalCommandCreation(in: folder) }
-                }
-                Button("New Folder") {
-                    workspaceStore.showFolderCreation(parentID: folder.id)
-                }
-                Divider()
-                Button("Delete…", role: .destructive) {
-                    workspaceStore.showFolderDeletionConfirmation(folder)
-                }
-                .disabled(!folder.children.isEmpty || !folder.connections.isEmpty || !folder.webLinks.isEmpty || !folder.terminalCommands.isEmpty)
             }
             .onDrag {
                 treeItemProvider("folder:\(folder.id.uuidString)")
             }
             .onDrop(of: [.text], delegate: FolderDropDelegate(targetFolderID: folder.id, store: workspaceStore))
+            .onChange(of: isFiltering) { _, isFiltering in
+                if isFiltering {
+                    isExpandedWhileFiltering = true
+                }
+            }
 
             if isExpanded {
                 ForEach(matchingConnections) { connection in
                     HStack(spacing: 6) {
                         TreeIndentation(depth: depth + 1)
-                        SSHConnectionLabel(name: connection.name)
+                        ConnectionLabel(connection: connection)
                     }
-                        .frame(height: 18)
-                        .help("SSH: \(connection.host):\(connection.port)")
+                        .frame(maxWidth: .infinity, minHeight: 18, maxHeight: 18, alignment: .leading)
+                        .contentShape(Rectangle())
+                        .help("\(connection.connectionType == .rdp ? "RDP" : "SSH"): \(connection.host):\(connection.port)")
                         .font(.system(size: 12, weight: .regular))
                         .listRowInsets(EdgeInsets(top: 1, leading: 8, bottom: 1, trailing: 6))
                         .listRowBackground(workspaceStore.selectedTreeItemIDs.contains(connection.id) ? Color.accentColor.opacity(0.72) : .clear)
@@ -1347,7 +1721,11 @@ private struct FolderTreeRow: View {
                             workspaceStore.selectTreeItem(connection.id)
                         })
                         .onTapGesture(count: 2) {
-                            workspaceStore.selectSSHConnection(connection)
+                            if connection.connectionType == .rdp {
+                                workspaceStore.launchRDPConnection(connection)
+                            } else {
+                                workspaceStore.selectSSHConnection(connection)
+                            }
                         }
                         .contextMenu { connectionMenu(connection) }
                         .onDrag {
@@ -1357,7 +1735,7 @@ private struct FolderTreeRow: View {
                 ForEach(matchingWebLinks) { webLink in
                     HStack(spacing: 6) {
                         TreeIndentation(depth: depth + 1)
-                        WebLinkLabel(name: webLink.name, url: webLink.url)
+                        WebLinkTitle(webLink: webLink)
                     }
                     .frame(height: 18)
                     .help(webLink.url)
@@ -1404,8 +1782,11 @@ private struct FolderTreeRow: View {
 
     @ViewBuilder
     private func connectionMenu(_ connection: SSHConnection) -> some View {
-        Button("Edit…") {
-            workspaceStore.showSSHConnectionEditor(connection)
+        if connection.connectionType == .rdp {
+            Button("Edit…") { workspaceStore.showRDPConnectionEditor(connection) }
+            Button("Open RDP") { workspaceStore.launchRDPConnection(connection) }
+        } else {
+            Button("Edit…") { workspaceStore.showSSHConnectionEditor(connection) }
         }
         Divider()
         Button("Move to Trash", role: .destructive) { workspaceStore.moveSSHConnectionToTrash(connection.id) }
@@ -1477,13 +1858,40 @@ private struct FolderDropDelegate: DropDelegate {
     }
 }
 
+private struct QuickAccessDropDelegate: DropDelegate {
+    let targetID: UUID?
+    let store: SecureWorkspaceStore
+
+    func validateDrop(info: DropInfo) -> Bool {
+        !store.isProcessing && info.hasItemsConforming(to: [.text])
+    }
+
+    func dropUpdated(info: DropInfo) -> DropProposal? {
+        DropProposal(operation: .move)
+    }
+
+    func performDrop(info: DropInfo) -> Bool {
+        guard let provider = info.itemProviders(for: [.text]).first else { return false }
+        provider.loadObject(ofClass: NSString.self) { value, _ in
+            guard let payload = value as? String,
+                  let idString = payload.split(separator: ":", maxSplits: 1).last,
+                  payload.hasPrefix("quickaccess:"),
+                  let movedID = UUID(uuidString: String(idString)) else { return }
+            DispatchQueue.main.async {
+                store.reorderQuickAccess(movedID: movedID, before: targetID)
+            }
+        }
+        return true
+    }
+}
+
 private struct TagTextField: View {
     @Binding var tags: String
 
     var body: some View {
         TextField("Tags (comma separated)", text: $tags)
             .textFieldStyle(.roundedBorder)
-            .help("Use commas to separate tags, for example: prod, iad, sauron")
+            .help("Use commas to separate tags, for example: prod, region, monitoring")
     }
 }
 
@@ -1535,7 +1943,7 @@ private struct FolderEditorView: View {
             Picker("Credential", selection: $workspaceStore.editingFolderCredentialID) {
                 Text("Inherit from parent").tag(UUID?.none)
                 ForEach(workspaceStore.credentials) { credential in
-                    Text("\(credential.name) (\(credential.username))").tag(Optional(credential.id))
+                    Text(credential.name).tag(Optional(credential.id))
                 }
             }
             Text(workspaceStore.editingFolderCredentialSummary)
@@ -1564,6 +1972,10 @@ private struct SSHConnectionForm: View {
     @State private var port = "22"
     @State private var credentialID: UUID?
     @State private var tags = ""
+    @State private var isLocalTunnelEnabled = false
+    @State private var localTunnelPort = "13306"
+    @State private var localTunnelHost = "127.0.0.1"
+    @State private var localTunnelRemotePort = "3306"
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -1580,10 +1992,16 @@ private struct SSHConnectionForm: View {
             Picker("Credential", selection: $credentialID) {
                 Text("Inherit from folder").tag(UUID?.none)
                 ForEach(workspaceStore.credentials) { credential in
-                    Text("\(credential.name) (\(credential.username))").tag(Optional(credential.id))
+                    Text(credential.name).tag(Optional(credential.id))
                 }
             }
             TagTextField(tags: $tags)
+            LocalTunnelFields(
+                isEnabled: $isLocalTunnelEnabled,
+                localPort: $localTunnelPort,
+                remoteHost: $localTunnelHost,
+                remotePort: $localTunnelRemotePort
+            )
             if let connection = workspaceStore.editingSSHConnection {
                 Text(workspaceStore.credentialSummary(for: connection))
                     .font(.caption)
@@ -1598,14 +2016,164 @@ private struct SSHConnectionForm: View {
                         return
                     }
                     workspaceStore.setNewConnectionCredential(credentialID)
-                    workspaceStore.createSSHConnection(name: name, host: host, username: username, port: portNumber, tags: tags.split(separator: ",").map(String.init))
+                    workspaceStore.createSSHConnection(name: name, host: host, username: username, port: portNumber, tags: tags.split(separator: ",").map(String.init), localTunnel: localTunnel)
                 }
                 .buttonStyle(.borderedProminent)
                 .disabled(host.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
         }
         .padding(24)
-        .frame(width: 360)
+        .frame(width: 460)
+    }
+
+    private var localTunnel: SSHLocalTunnel? {
+        guard isLocalTunnelEnabled else { return nil }
+        return SSHLocalTunnel(localPort: Int(localTunnelPort) ?? 0, remoteHost: localTunnelHost.trimmingCharacters(in: .whitespacesAndNewlines), remotePort: Int(localTunnelRemotePort) ?? 0)
+    }
+}
+
+private struct RDPConnectionForm: View {
+    @EnvironmentObject private var workspaceStore: SecureWorkspaceStore
+    @State private var name = ""
+    @State private var host = ""
+    @State private var username = ""
+    @State private var domain = ""
+    @State private var port = "3389"
+    @State private var credentialID: UUID?
+    @State private var tags = ""
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("New RDP Connection").font(.title2.weight(.semibold))
+            TextField("Name (optional)", text: $name).textFieldStyle(.roundedBorder)
+            TextField("Host or IP address", text: $host).textFieldStyle(.roundedBorder)
+            TextField("Username", text: $username).textFieldStyle(.roundedBorder)
+            TextField("Domain (optional)", text: $domain).textFieldStyle(.roundedBorder)
+            TextField("Port", text: $port).textFieldStyle(.roundedBorder)
+            Picker("Credential", selection: $credentialID) {
+                Text("Inherit from folder").tag(UUID?.none)
+                ForEach(workspaceStore.credentials) { credential in
+                    Text(credential.name).tag(Optional(credential.id))
+                }
+            }
+            TagTextField(tags: $tags)
+            Text("RDP opens in a GateTree tab. Assigned passwords are read from KeePassXC.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            HStack {
+                Button("Cancel") { workspaceStore.cancelRDPConnectionCreation() }
+                Spacer()
+                Button("Add RDP Connection") {
+                    guard let portNumber = Int(port) else {
+                        workspaceStore.errorMessage = "Enter a valid RDP port."
+                        return
+                    }
+                    workspaceStore.createRDPConnection(name: name, host: host, username: username, domain: domain, port: portNumber, credentialID: credentialID, tags: tags.split(separator: ",").map(String.init))
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(host.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }
+        .padding(24)
+        .frame(width: 390)
+    }
+}
+
+private struct RDPConnectionEditorForm: View {
+    @EnvironmentObject private var workspaceStore: SecureWorkspaceStore
+    @State private var name = ""
+    @State private var host = ""
+    @State private var username = ""
+    @State private var domain = ""
+    @State private var port = "3389"
+    @State private var credentialID: UUID?
+    @State private var tags = ""
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Edit RDP Connection").font(.title2.weight(.semibold))
+            TextField("Name (optional)", text: $name).textFieldStyle(.roundedBorder)
+            TextField("Host or IP address", text: $host).textFieldStyle(.roundedBorder)
+            TextField("Username", text: $username).textFieldStyle(.roundedBorder)
+            TextField("Domain (optional)", text: $domain).textFieldStyle(.roundedBorder)
+            TextField("Port", text: $port).textFieldStyle(.roundedBorder)
+            Picker("Credential", selection: $credentialID) {
+                Text("Inherit from folder").tag(UUID?.none)
+                ForEach(workspaceStore.credentials) { credential in
+                    Text(credential.name).tag(Optional(credential.id))
+                }
+            }
+            TagTextField(tags: $tags)
+            HStack {
+                Button("Cancel") { workspaceStore.cancelRDPConnectionEditor() }
+                Spacer()
+                Button("Save") {
+                    guard let portNumber = Int(port) else {
+                        workspaceStore.errorMessage = "Enter a valid RDP port."
+                        return
+                    }
+                    workspaceStore.updateRDPConnection(name: name, host: host, username: username, domain: domain, port: portNumber, credentialID: credentialID, tags: tags.split(separator: ",").map(String.init))
+                }
+                .buttonStyle(.borderedProminent)
+                .keyboardShortcut(.defaultAction)
+                .disabled(host.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }
+        .padding(24)
+        .frame(width: 390)
+        .onAppear {
+            guard let connection = workspaceStore.editingRDPConnection else { return }
+            name = connection.name
+            host = connection.host
+            username = connection.username
+            domain = workspaceStore.rdpDomainForEditor(connection)
+            port = String(connection.port)
+            credentialID = connection.credentialID
+            tags = connection.tags.joined(separator: ", ")
+        }
+    }
+}
+
+private struct RDPUsernamePrompt: View {
+    @EnvironmentObject private var workspaceStore: SecureWorkspaceStore
+    @FocusState private var isUsernameFocused: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text(workspaceStore.isPromptingRDPPassword ? "Enter your password:" : "Enter your username:")
+                .foregroundStyle(.white)
+                .font(.system(.body, design: .monospaced))
+            Group {
+                if workspaceStore.isPromptingRDPPassword {
+                    SecureField("Password", text: $workspaceStore.promptedRDPPassword)
+                        .textFieldStyle(.roundedBorder)
+                        .foregroundStyle(.primary)
+                        .onSubmit { workspaceStore.connectWithPromptedRDPPassword() }
+                } else {
+                    TextField("", text: $workspaceStore.promptedRDPUsername)
+                        .textFieldStyle(.plain)
+                        .foregroundStyle(.white)
+                        .onSubmit { workspaceStore.connectWithPromptedRDPUsername() }
+                }
+            }
+            .focused($isUsernameFocused)
+            .font(.system(.body, design: .monospaced))
+            .padding(.top, 4)
+            .frame(maxWidth: .infinity, minHeight: 22, alignment: .leading)
+            Text("Press Return to connect · Esc to cancel")
+                .foregroundStyle(.white.opacity(0.55))
+                .font(.system(.caption, design: .monospaced))
+                .padding(.top, 12)
+        }
+        .padding(20)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(.black)
+        .onAppear { DispatchQueue.main.async { isUsernameFocused = true } }
+        .onChange(of: workspaceStore.isPromptingRDPPassword) { _, _ in
+            isUsernameFocused = false
+            DispatchQueue.main.async { isUsernameFocused = true }
+        }
+        .onExitCommand { workspaceStore.cancelRDPUsernamePrompt() }
     }
 }
 
@@ -1614,17 +2182,19 @@ private struct WebLinkForm: View {
     @State private var name = ""
     @State private var url = ""
     @State private var tags = ""
+    @State private var icon: WebLinkIcon = .icon12
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text("New Web Link").font(.title2.weight(.semibold))
             TextField("Name (optional)", text: $name).textFieldStyle(.roundedBorder)
             TextField("URL", text: $url).textFieldStyle(.roundedBorder)
+            WebLinkIconPicker(icon: $icon)
             TagTextField(tags: $tags)
             HStack {
                 Button("Cancel") { workspaceStore.cancelWebLinkCreation() }
                 Spacer()
-                Button("Add Web Link") { workspaceStore.createWebLink(name: name, urlString: url, tags: tags.split(separator: ",").map(String.init)) }
+                Button("Add Web Link") { workspaceStore.createWebLink(name: name, urlString: url, tags: tags.split(separator: ",").map(String.init), icon: icon) }
                     .buttonStyle(.borderedProminent)
                     .disabled(url.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
@@ -1701,17 +2271,19 @@ private struct WebLinkEditorForm: View {
     @State private var name = ""
     @State private var url = ""
     @State private var tags = ""
+    @State private var icon: WebLinkIcon = .icon12
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text("Edit Web Link").font(.title2.weight(.semibold))
             TextField("Name (optional)", text: $name).textFieldStyle(.roundedBorder)
             TextField("URL", text: $url).textFieldStyle(.roundedBorder)
+            WebLinkIconPicker(icon: $icon)
             TagTextField(tags: $tags)
             HStack {
                 Button("Cancel") { workspaceStore.cancelWebLinkEditor() }
                 Spacer()
-                Button("Save") { workspaceStore.updateWebLink(name: name, urlString: url, tags: tags.split(separator: ",").map(String.init)) }
+                Button("Save") { workspaceStore.updateWebLink(name: name, urlString: url, tags: tags.split(separator: ",").map(String.init), icon: icon) }
                     .buttonStyle(.borderedProminent)
                     .keyboardShortcut(.defaultAction)
                     .disabled(url.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
@@ -1723,6 +2295,7 @@ private struct WebLinkEditorForm: View {
             name = workspaceStore.editingWebLink?.name ?? ""
             url = workspaceStore.editingWebLink?.url ?? ""
             tags = workspaceStore.editingWebLink?.tags.joined(separator: ", ") ?? ""
+            icon = workspaceStore.editingWebLink?.icon ?? .icon12
         }
     }
 }
@@ -1735,6 +2308,10 @@ private struct SSHConnectionEditorForm: View {
     @State private var port = "22"
     @State private var credentialID: UUID?
     @State private var tags = ""
+    @State private var isLocalTunnelEnabled = false
+    @State private var localTunnelPort = "13306"
+    @State private var localTunnelHost = "127.0.0.1"
+    @State private var localTunnelRemotePort = "3306"
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -1751,10 +2328,16 @@ private struct SSHConnectionEditorForm: View {
             Picker("Credential", selection: $credentialID) {
                 Text("Inherit from folder").tag(UUID?.none)
                 ForEach(workspaceStore.credentials) { credential in
-                    Text("\(credential.name) (\(credential.username))").tag(Optional(credential.id))
+                    Text(credential.name).tag(Optional(credential.id))
                 }
             }
             TagTextField(tags: $tags)
+            LocalTunnelFields(
+                isEnabled: $isLocalTunnelEnabled,
+                localPort: $localTunnelPort,
+                remoteHost: $localTunnelHost,
+                remotePort: $localTunnelRemotePort
+            )
 
             HStack {
                 Button("Cancel") { workspaceStore.cancelSSHConnectionEditor() }
@@ -1764,7 +2347,7 @@ private struct SSHConnectionEditorForm: View {
                         workspaceStore.errorMessage = "Enter a valid SSH port."
                         return
                     }
-                    workspaceStore.updateSSHConnection(name: name, host: host, username: username, port: portNumber, credentialID: credentialID, tags: tags.split(separator: ",").map(String.init))
+                    workspaceStore.updateSSHConnection(name: name, host: host, username: username, port: portNumber, credentialID: credentialID, tags: tags.split(separator: ",").map(String.init), localTunnel: localTunnel)
                 }
                 .buttonStyle(.borderedProminent)
                 .keyboardShortcut(.defaultAction)
@@ -1772,7 +2355,7 @@ private struct SSHConnectionEditorForm: View {
             }
         }
         .padding(24)
-        .frame(width: 360)
+        .frame(width: 460)
         .onAppear {
             if let connection = workspaceStore.editingSSHConnection {
                 name = connection.name
@@ -1781,6 +2364,47 @@ private struct SSHConnectionEditorForm: View {
                 port = String(connection.port)
                 credentialID = connection.credentialID
                 tags = connection.tags.joined(separator: ", ")
+                if let tunnel = connection.localTunnel {
+                    isLocalTunnelEnabled = true
+                    localTunnelPort = String(tunnel.localPort)
+                    localTunnelHost = tunnel.remoteHost
+                    localTunnelRemotePort = String(tunnel.remotePort)
+                }
+            }
+        }
+    }
+
+    private var localTunnel: SSHLocalTunnel? {
+        guard isLocalTunnelEnabled else { return nil }
+        return SSHLocalTunnel(localPort: Int(localTunnelPort) ?? 0, remoteHost: localTunnelHost.trimmingCharacters(in: .whitespacesAndNewlines), remotePort: Int(localTunnelRemotePort) ?? 0)
+    }
+}
+
+private struct LocalTunnelFields: View {
+    @Binding var isEnabled: Bool
+    @Binding var localPort: String
+    @Binding var remoteHost: String
+    @Binding var remotePort: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Toggle("Create local SSH tunnel", isOn: $isEnabled)
+            if isEnabled {
+                HStack {
+                    Text("localhost:")
+                    TextField("Local port", text: $localPort)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 82)
+                    Text("→")
+                    TextField("Remote host", text: $remoteHost)
+                        .textFieldStyle(.roundedBorder)
+                    TextField("Port", text: $remotePort)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 66)
+                }
+                Text("The tunnel starts with this SSH session and closes with it.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
         }
     }
@@ -1788,26 +2412,37 @@ private struct SSHConnectionEditorForm: View {
 
 private struct SSHUsernamePrompt: View {
     @EnvironmentObject private var workspaceStore: SecureWorkspaceStore
+    @FocusState private var isUsernameFocused: Bool
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("SSH Username")
-                .font(.title2.weight(.semibold))
-            Text("Enter the username for this connection. It will be used only for this session.")
-                .foregroundStyle(.secondary)
-            TextField("Username", text: $workspaceStore.promptedSSHUsername)
-                .textFieldStyle(.roundedBorder)
+        VStack(alignment: .leading, spacing: 0) {
+            Text("Enter your username (or press Return to use your SSH config):")
+                .foregroundStyle(.white)
+                .font(.system(.body, design: .monospaced))
+
+            TextField("", text: $workspaceStore.promptedSSHUsername)
+                .textFieldStyle(.plain)
+                .foregroundStyle(.white)
+                .font(.system(.body, design: .monospaced))
                 .onSubmit { workspaceStore.connectWithPromptedSSHUsername() }
-            HStack {
-                Button("Cancel") { workspaceStore.cancelSSHUsernamePrompt() }
-                Spacer()
-                Button("Connect") { workspaceStore.connectWithPromptedSSHUsername() }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(workspaceStore.promptedSSHUsername.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            .focused($isUsernameFocused)
+            .padding(.top, 4)
+            .frame(maxWidth: .infinity, minHeight: 22, alignment: .leading)
+
+            Text("Press Return to connect · Esc to cancel")
+                .foregroundStyle(.white.opacity(0.55))
+                .font(.system(.caption, design: .monospaced))
+                .padding(.top, 12)
+        }
+        .padding(20)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(.black)
+        .onAppear {
+            DispatchQueue.main.async {
+                isUsernameFocused = true
             }
         }
-        .padding(24)
-        .frame(width: 380)
+        .onExitCommand { workspaceStore.cancelSSHUsernamePrompt() }
     }
 }
 
