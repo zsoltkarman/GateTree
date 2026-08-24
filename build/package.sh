@@ -58,6 +58,7 @@ xcodebuild \
   -project "$APP_NAME.xcodeproj" \
   -scheme "$APP_NAME" \
   -configuration Release \
+  -skipPackagePluginValidation \
   -derivedDataPath "$BUILD_DIR" \
   OTHER_CFLAGS="$RDP_CFLAGS" \
   OTHER_LDFLAGS="$RDP_LDFLAGS" \

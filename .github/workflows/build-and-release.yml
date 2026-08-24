@@ -220,6 +220,7 @@ jobs:
             -project GateTree.xcodeproj \
             -scheme GateTree \
             -configuration Release \
+            -skipPackagePluginValidation \
             -archivePath "$archive_path" \
             OTHER_CFLAGS="$RDP_CFLAGS" \
             OTHER_LDFLAGS="$RDP_LDFLAGS" \
