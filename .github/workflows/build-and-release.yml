@@ -178,15 +178,18 @@ jobs:
           security import "$certificate_path" \
             -k "$keychain_path" \
             -P "$CERTIFICATE_PASSWORD" \
+            -A \
             -T /usr/bin/codesign
           security import "$installer_certificate_path" \
             -k "$keychain_path" \
             -P "$INSTALLER_CERTIFICATE_PASSWORD" \
+            -A \
             -T /usr/bin/productbuild
           security set-key-partition-list \
             -S apple-tool:,apple:,codesign: \
             -s -k "" "$keychain_path"
           security list-keychain -d user -s "$keychain_path"
+          security find-identity -v -p codesigning "$keychain_path"
           mkdir -p "$HOME/Library/MobileDevice/Provisioning Profiles"
           cp "$profile_path" "$HOME/Library/MobileDevice/Provisioning Profiles/"
           security cms -D -i "$profile_path" > "$RUNNER_TEMP/profile.plist"

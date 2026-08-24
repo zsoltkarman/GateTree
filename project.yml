@@ -22,7 +22,7 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.gatetree.app
         PRODUCT_NAME: GateTree
-        MARKETING_VERSION: 0.2.9
+        MARKETING_VERSION: 0.2.10
         CURRENT_PROJECT_VERSION: 1
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_KEY_CFBundleDisplayName: GateTree
