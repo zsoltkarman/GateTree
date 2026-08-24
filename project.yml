@@ -22,7 +22,7 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.gatetree.app
         PRODUCT_NAME: GateTree
-        MARKETING_VERSION: 0.2.8
+        MARKETING_VERSION: 0.2.9
         CURRENT_PROJECT_VERSION: 1
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_KEY_CFBundleDisplayName: GateTree
@@ -33,7 +33,7 @@ targets:
         # Distribution settings are target-scoped so Swift package targets do
         # not inherit a macOS provisioning profile in CI.
         CODE_SIGN_STYLE: Manual
-        CODE_SIGN_IDENTITY: Mac App Distribution
+        CODE_SIGN_IDENTITY: "3rd Party Mac Developer Application: Zsolt Karman (PZ6YC7GM6J)"
         DEVELOPMENT_TEAM: PZ6YC7GM6J
         PROVISIONING_PROFILE_SPECIFIER: GateTree App Store
         SWIFT_OBJC_BRIDGING_HEADER: GateTreeApp/RDP/Bridge.h

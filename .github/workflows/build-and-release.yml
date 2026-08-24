@@ -216,8 +216,8 @@ jobs:
             <key>provisioningProfiles</key><dict>
               <key>com.gatetree.app</key><string>${PROFILE_UUID}</string>
             </dict>
-            <key>signingCertificate</key><string>Mac App Distribution</string>
-            <key>installerSigningCertificate</key><string>Mac Installer Distribution</string>
+            <key>signingCertificate</key><string>3rd Party Mac Developer Application: Zsolt Karman (PZ6YC7GM6J)</string>
+            <key>installerSigningCertificate</key><string>3rd Party Mac Developer Installer: Zsolt Karman (PZ6YC7GM6J)</string>
             <key>signingStyle</key><string>manual</string>
             <key>teamID</key><string>${APPLE_TEAM_ID}</string>
             <key>uploadSymbols</key><true/>
