@@ -22,7 +22,7 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.gatetree.app
         PRODUCT_NAME: GateTree
-        MARKETING_VERSION: 0.2.5
+        MARKETING_VERSION: 0.2.6
         CURRENT_PROJECT_VERSION: 1
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_KEY_CFBundleDisplayName: GateTree
@@ -30,7 +30,12 @@ targets:
         INFOPLIST_KEY_NSAppleEventsUsageDescription: GateTree activates the selected Google Chrome tab for a bookmarked web link.
         INFOPLIST_KEY_NSLocalNetworkUsageDescription: GateTree connects to local and remote systems over SSH and RDP.
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
-        CODE_SIGN_STYLE: Automatic
+        # Distribution settings are target-scoped so Swift package targets do
+        # not inherit a macOS provisioning profile in CI.
+        CODE_SIGN_STYLE: Manual
+        CODE_SIGN_IDENTITY: Apple Distribution
+        DEVELOPMENT_TEAM: PZ6YC7GM6J
+        PROVISIONING_PROFILE_SPECIFIER: GateTree App Store
         SWIFT_OBJC_BRIDGING_HEADER: GateTreeApp/RDP/Bridge.h
         HEADER_SEARCH_PATHS:
           - /opt/homebrew/opt/freerdp/include/freerdp3
