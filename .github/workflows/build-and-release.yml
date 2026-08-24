@@ -168,6 +168,7 @@ jobs:
           certificate_path="$RUNNER_TEMP/AppStoreDistribution.p12"
           installer_certificate_path="$RUNNER_TEMP/MacInstallerDistribution.p12"
           profile_path="$RUNNER_TEMP/GateTree.provisionprofile"
+          wwdr_certificate_path="$RUNNER_TEMP/AppleWWDRCAG3.cer"
           keychain_path="$RUNNER_TEMP/gatetree-app-store.keychain-db"
           echo "$CERTIFICATE_BASE64" | base64 -D > "$certificate_path"
           echo "$INSTALLER_CERTIFICATE_BASE64" | base64 -D > "$installer_certificate_path"
@@ -175,6 +176,10 @@ jobs:
           security create-keychain -p "" "$keychain_path"
           security set-keychain-settings -lut 21600 "$keychain_path"
           security unlock-keychain -p "" "$keychain_path"
+          curl --fail --location --silent --show-error \
+            --output "$wwdr_certificate_path" \
+            https://www.apple.com/certificateauthority/AppleWWDRCAG3.cer
+          security import "$wwdr_certificate_path" -k "$keychain_path"
           security import "$certificate_path" \
             -k "$keychain_path" \
             -P "$CERTIFICATE_PASSWORD" \
@@ -188,7 +193,7 @@ jobs:
           security set-key-partition-list \
             -S apple-tool:,apple:,codesign: \
             -s -k "" "$keychain_path"
-          security list-keychain -d user -s "$keychain_path"
+          security list-keychain -d user -s "$keychain_path" login.keychain-db
           security find-identity -v -p codesigning "$keychain_path"
           mkdir -p "$HOME/Library/MobileDevice/Provisioning Profiles"
           cp "$profile_path" "$HOME/Library/MobileDevice/Provisioning Profiles/"
