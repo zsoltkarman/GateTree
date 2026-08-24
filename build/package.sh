@@ -18,8 +18,9 @@
 
 set -euo pipefail
 
-VERSION="${1:-v0.2.3-alpha}"
 PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+VERSION_NUMBER="$(tr -d '[:space:]' < "$PROJECT_ROOT/VERSION")"
+VERSION="${1:-v$VERSION_NUMBER}"
 BUILD_DIR="$PROJECT_ROOT/.build-release"
 DIST_DIR="$PROJECT_ROOT/.dist"
 STAGE_DIR="$DIST_DIR/dmg-stage"
@@ -36,6 +37,11 @@ if [ -n "$DEVELOPER_ID" ] && \
 fi
 
 cd "$PROJECT_ROOT"
+
+if [[ ! "$VERSION_NUMBER" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || [ "${VERSION#v}" != "$VERSION_NUMBER" ]; then
+  echo "ERROR: the requested version ($VERSION) must match VERSION ($VERSION_NUMBER)." >&2
+  exit 1
+fi
 
 echo "==> Cleaning previous package output"
 rm -rf "$BUILD_DIR" "$DIST_DIR"

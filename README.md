@@ -95,7 +95,7 @@ are intentionally ignored by Git.
 ## Create a distributable DMG
 
 ```zsh
-./build/package.sh v0.2.0
+./build/package.sh
 ```
 
 Without a configured Developer ID certificate this produces an ad-hoc signed
@@ -105,10 +105,17 @@ Apple notarization profile named `GateTree-notary` (or set
 
 ## Automated GitHub releases
 
-Pushing a tag such as `v0.2.0` starts the GitHub Actions release workflow. It
-builds a DMG and attaches it to a GitHub Release automatically. Without Apple
-signing secrets the DMG is ad-hoc signed; it is useful for testing but will
-not be trusted by Gatekeeper.
+Pushing a tag matching `VERSION`, such as `v0.2.3`, starts the GitHub Actions
+release workflow on a macOS 15 runner. It builds a DMG, attaches it to a
+GitHub Release, and uploads a separate App Store-signed build to TestFlight.
+Create a checked release tag with:
+
+```zsh
+./deploy/tag-release.sh
+```
+
+Without Apple signing secrets the DMG is ad-hoc signed; it is useful for
+testing but will not be trusted by Gatekeeper.
 
 For signed, notarized public releases, configure these GitHub Actions secrets:
 
@@ -121,6 +128,20 @@ For signed, notarized public releases, configure these GitHub Actions secrets:
 
 The workflow imports the certificate only into the temporary GitHub runner
 keychain and creates a temporary `GateTree-notary` profile from the API key.
+
+For TestFlight, create an `app-store` GitHub environment and add these
+environment secrets:
+
+- `APP_STORE_CERTIFICATE_BASE64` — Base64-encoded Apple Distribution `.p12`.
+- `APP_STORE_CERTIFICATE_PASSWORD` — password used when exporting that `.p12`.
+- `MAC_APP_STORE_PROVISIONING_PROFILE_BASE64` — Base64-encoded Mac App Store
+  Connect provisioning profile.
+- `APPLE_API_KEY_ID`, `APPLE_API_ISSUER_ID`, `APPLE_API_PRIVATE_KEY` — App
+  Store Connect API key details.
+
+The TestFlight build number is derived from the GitHub Actions run, so a
+re-run receives a distinct build number. The App Store Connect record and App
+ID must use `com.gatetree.app` under Apple team `PZ6YC7GM6J`.
 
 ## RDP notes
 
