@@ -132,16 +132,12 @@ keychain and creates a temporary `GateTree-notary` profile from the API key.
 For TestFlight, create an `app-store` GitHub environment and add these
 environment secrets:
 
-- `APP_STORE_CERTIFICATE_BASE64` — Base64-encoded Apple Distribution `.p12`.
-- `APP_STORE_CERTIFICATE_PASSWORD` — password used when exporting that `.p12`.
-- `MAC_APP_STORE_PROVISIONING_PROFILE_BASE64` — Base64-encoded Mac App Store
-  Connect provisioning profile.
-- `MAC_INSTALLER_CERTIFICATE_BASE64` — Base64-encoded Mac Installer
-  Distribution `.p12`.
-- `MAC_INSTALLER_CERTIFICATE_PASSWORD` — password used when exporting that
-  installer `.p12`.
 - `APPLE_API_KEY_ID`, `APPLE_API_ISSUER_ID`, `APPLE_API_PRIVATE_KEY` — App
   Store Connect API key details.
+
+The TestFlight job uses Xcode cloud signing for the App Store archive, so the
+Apple distribution certificates and provisioning profile remain managed by
+Apple instead of being copied into CI.
 
 The TestFlight build number is derived from the GitHub Actions run, so a
 re-run receives a distinct build number. The App Store Connect record and App
