@@ -44,6 +44,9 @@ struct SSHSessionPane: View {
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
+                    Text(password?.isEmpty == false ? "Using the saved SSH password." : "Enter the SSH password in the terminal when prompted.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
                 Button(action: close) {
                     Image(systemName: "xmark")
@@ -79,6 +82,13 @@ private struct EmbeddedSSHTerminal: NSViewRepresentable {
             "-o", "GlobalKnownHostsFile=/dev/null",
             "-o", "StrictHostKeyChecking=accept-new"
         ]
+        if password?.isEmpty == false {
+            arguments += [
+                "-o", "PubkeyAuthentication=no",
+                "-o", "GSSAPIAuthentication=no",
+                "-o", "PreferredAuthentications=keyboard-interactive,password"
+            ]
+        }
         if !connection.username.isEmpty {
             arguments += ["-l", connection.username]
         }
@@ -89,10 +99,11 @@ private struct EmbeddedSSHTerminal: NSViewRepresentable {
             ]
         }
         arguments.append(connection.host)
+        terminal.useSavedPassword(password)
         terminal.startProcess(
             executable: "/usr/bin/ssh",
             args: arguments,
-            environment: askPassEnvironment(password: password),
+            environment: nil,
             execName: nil
         )
         if isActive {
@@ -109,27 +120,6 @@ private struct EmbeddedSSHTerminal: NSViewRepresentable {
             }
         }
     }
-
-    private func askPassEnvironment(password: String?) -> [String]? {
-        guard let password, !password.isEmpty else { return nil }
-
-        let helperURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("gatetree-ssh-askpass-\(UUID().uuidString)")
-        let script = "#!/bin/sh\nprintf '%s\\n' \"$GATETREE_SSH_PASSWORD\"\n"
-        do {
-            try script.write(to: helperURL, atomically: true, encoding: .utf8)
-            try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: helperURL.path)
-        } catch {
-            return nil
-        }
-
-        var environment = ProcessInfo.processInfo.environment.map { "\($0.key)=\($0.value)" }
-        environment.append("SSH_ASKPASS=\(helperURL.path)")
-        environment.append("SSH_ASKPASS_REQUIRE=force")
-        environment.append("DISPLAY=gatetree:0")
-        environment.append("GATETREE_SSH_PASSWORD=\(password)")
-        return environment
-    }
 }
 
 /// Adds the familiar terminal clipboard interactions on top of SwiftTerm.
@@ -138,6 +128,27 @@ private struct EmbeddedSSHTerminal: NSViewRepresentable {
 private final class GateTreeTerminalView: LocalProcessTerminalView {
     private var didDragWithPrimaryButton = false
     private var forwardsRightClickToRemote = false
+    private var savedPassword: String?
+    private var hasSentSavedPassword = false
+    private var recentOutput = ""
+
+    func useSavedPassword(_ password: String?) {
+        savedPassword = password?.isEmpty == false ? password : nil
+    }
+
+    override func dataReceived(slice: ArraySlice<UInt8>) {
+        super.dataReceived(slice: slice)
+        guard !hasSentSavedPassword, let savedPassword else { return }
+
+        recentOutput += String(decoding: slice, as: UTF8.self).lowercased()
+        recentOutput = String(recentOutput.suffix(512))
+        guard recentOutput.contains("password:") else { return }
+
+        hasSentSavedPassword = true
+        self.savedPassword = nil
+        let input = Array((savedPassword + "\n").utf8)
+        process.send(data: input[...])
+    }
 
     override func mouseDown(with event: NSEvent) {
         didDragWithPrimaryButton = false
