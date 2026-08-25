@@ -1126,33 +1126,56 @@ final class SecureWorkspaceStore: ObservableObject {
     }
 
     func closeSSHConnection(_ id: UUID) {
+        let wasActive = activeSessionProtocol == .ssh && activeSessionID == id
+        let wasSelected = selectedSSHConnection?.id == id
         openSSHConnections.removeAll { $0.id == id }
         sshPasswordsByConnectionID[id] = nil
-        guard selectedSSHConnection?.id == id else { return }
-        selectedSSHConnection = openSSHConnections.last
-        selectedSSHPassword = selectedSSHConnection.flatMap { sshPasswordsByConnectionID[$0.id] }
-        if activeSessionProtocol == .ssh && activeSessionID == id {
-            activeSessionID = selectedSSHConnection?.id
-            activeSessionProtocol = selectedSSHConnection == nil ? nil : .ssh
+        if wasSelected {
+            selectedSSHConnection = openSSHConnections.last
+            selectedSSHPassword = selectedSSHConnection.flatMap { sshPasswordsByConnectionID[$0.id] }
+        }
+        if wasActive {
+            activateNextOpenPane()
         }
     }
 
     func closeRDPConnection(_ id: UUID) {
+        let wasActive = activeSessionProtocol == .rdp && activeSessionID == id
+        let wasSelected = selectedRDPConnection?.id == id
         openRDPConnections.removeAll { $0.id == id }
         rdpPasswordsByConnectionID[id] = nil
-        guard selectedRDPConnection?.id == id else { return }
-        selectedRDPConnection = openRDPConnections.last
-        if activeSessionProtocol == .rdp && activeSessionID == id {
-            if let nextRDP = selectedRDPConnection {
-                activeSessionID = nextRDP.id
-                activeSessionProtocol = .rdp
-            } else if let ssh = selectedSSHConnection {
-                activeSessionID = ssh.id
-                activeSessionProtocol = .ssh
-            } else {
-                activeSessionID = nil
-                activeSessionProtocol = nil
-            }
+        if wasSelected {
+            selectedRDPConnection = openRDPConnections.last
+        }
+        if wasActive {
+            activateNextOpenPane()
+        }
+    }
+
+    /// Restores a visible pane after the active SSH or RDP tab closes.
+    /// Web links live in Chrome, but retain an in-app status pane so the
+    /// workspace must also reactivate one of those when it is the only type
+    /// of open tab left.
+    private func activateNextOpenPane() {
+        if let ssh = openSSHConnections.last {
+            selectedSSHConnection = ssh
+            selectedSSHPassword = sshPasswordsByConnectionID[ssh.id]
+            activeSessionID = ssh.id
+            activeSessionProtocol = .ssh
+            activeExternalWebLink = nil
+        } else if let rdp = openRDPConnections.last {
+            selectedRDPConnection = rdp
+            activeSessionID = rdp.id
+            activeSessionProtocol = .rdp
+            activeExternalWebLink = nil
+        } else if let webLink = openExternalWebLinks.last {
+            activeExternalWebLink = webLink
+            activeSessionID = nil
+            activeSessionProtocol = nil
+        } else {
+            activeSessionID = nil
+            activeSessionProtocol = nil
+            activeExternalWebLink = nil
         }
     }
 
