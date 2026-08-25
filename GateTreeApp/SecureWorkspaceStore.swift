@@ -397,13 +397,19 @@ final class SecureWorkspaceStore: ObservableObject {
         isShowingCredentialCreation = true
     }
 
-    func createCredential(name: String, username: String, databasePath: String, entryPath: String) {
+    func createCredential(name: String, username: String, databasePath: String, databaseBookmark: Data?, entryPath: String) {
         let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedUsername = username.trimmingCharacters(in: .whitespacesAndNewlines)
         let databasePath = databasePath.trimmingCharacters(in: .whitespacesAndNewlines)
         let entryPath = entryPath.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedName.isEmpty, !databasePath.isEmpty, !entryPath.isEmpty, !isProcessing else { return }
-        credentials.append(Credential(name: trimmedName, username: trimmedUsername, keepassDatabasePath: databasePath, keepassEntryPath: entryPath))
+        credentials.append(Credential(
+            name: trimmedName,
+            username: trimmedUsername,
+            keepassDatabasePath: databasePath,
+            keepassDatabaseBookmark: databaseBookmark,
+            keepassEntryPath: entryPath
+        ))
         synchronizeWorkspace()
         isShowingCredentialCreation = false
         save()
@@ -417,7 +423,7 @@ final class SecureWorkspaceStore: ObservableObject {
         isShowingCredentialEditor = true
     }
 
-    func updateCredential(name: String, username: String, databasePath: String, entryPath: String) {
+    func updateCredential(name: String, username: String, databasePath: String, databaseBookmark: Data?, entryPath: String) {
         guard let editingCredential, !isProcessing else { return }
         let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedUsername = username.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -425,7 +431,15 @@ final class SecureWorkspaceStore: ObservableObject {
         let entryPath = entryPath.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedName.isEmpty, !databasePath.isEmpty, !entryPath.isEmpty,
               let index = credentials.firstIndex(where: { $0.id == editingCredential.id }) else { return }
-        credentials[index] = Credential(id: editingCredential.id, name: trimmedName, username: trimmedUsername, keepassDatabasePath: databasePath, keepassEntryPath: entryPath)
+        let bookmark = databaseBookmark ?? (databasePath == editingCredential.keepassDatabasePath ? editingCredential.keepassDatabaseBookmark : nil)
+        credentials[index] = Credential(
+            id: editingCredential.id,
+            name: trimmedName,
+            username: trimmedUsername,
+            keepassDatabasePath: databasePath,
+            keepassDatabaseBookmark: bookmark,
+            keepassEntryPath: entryPath
+        )
         synchronizeWorkspace()
         self.editingCredential = nil
         isShowingCredentialEditor = false
@@ -1909,9 +1923,22 @@ final class SecureWorkspaceStore: ObservableObject {
             password = entered
             keepassMasterPasswords[databasePath] = password
         }
+        let databaseURL = URL(fileURLWithPath: databasePath)
+        let securityScopedURL = securityScopedDatabaseURL(for: databaseURL, bookmark: credential.keepassDatabaseBookmark)
+        defer {
+            securityScopedURL?.stopAccessingSecurityScopedResource()
+        }
+        if credential.keepassDatabaseBookmark != nil && securityScopedURL == nil {
+            errorMessage = "GateTree no longer has permission to read \(databaseURL.lastPathComponent). Edit the credential and choose the KeePass database again."
+            return nil
+        }
+        if credential.keepassDatabaseBookmark == nil && !FileManager.default.isReadableFile(atPath: databaseURL.path) {
+            errorMessage = "GateTree needs permission to read \(databaseURL.lastPathComponent). Edit the credential and choose the KeePass database again."
+            return nil
+        }
         do {
             return try KeePassXCProvider.readEntry(
-                databaseURL: URL(fileURLWithPath: databasePath),
+                databaseURL: securityScopedURL ?? databaseURL,
                 entryPath: entryPath,
                 masterPassword: password
             )
@@ -1920,6 +1947,20 @@ final class SecureWorkspaceStore: ObservableObject {
             errorMessage = error.localizedDescription
             return nil
         }
+    }
+
+    private func securityScopedDatabaseURL(for url: URL, bookmark: Data?) -> URL? {
+        guard let bookmark else { return nil }
+        var isStale = false
+        guard let bookmarkedURL = try? URL(
+            resolvingBookmarkData: bookmark,
+            options: .withSecurityScope,
+            relativeTo: nil,
+            bookmarkDataIsStale: &isStale
+        ), bookmarkedURL.standardizedFileURL == url.standardizedFileURL else {
+            return nil
+        }
+        return bookmarkedURL.startAccessingSecurityScopedResource() ? bookmarkedURL : nil
     }
 
     private func promptForKeePassMasterPassword(databasePath: String) -> String? {
@@ -2294,13 +2335,15 @@ struct Credential: Codable, Identifiable, Hashable, Sendable {
     var name: String
     var username: String
     var keepassDatabasePath: String
+    var keepassDatabaseBookmark: Data?
     var keepassEntryPath: String
 
-    init(id: UUID = UUID(), name: String, username: String, keepassDatabasePath: String = "", keepassEntryPath: String = "") {
+    init(id: UUID = UUID(), name: String, username: String, keepassDatabasePath: String = "", keepassDatabaseBookmark: Data? = nil, keepassEntryPath: String = "") {
         self.id = id
         self.name = name
         self.username = username
         self.keepassDatabasePath = keepassDatabasePath
+        self.keepassDatabaseBookmark = keepassDatabaseBookmark
         self.keepassEntryPath = keepassEntryPath
     }
 

@@ -25,7 +25,12 @@ private extension View {
     }
 }
 
-private func chooseKeePassDatabasePath(_ completion: @escaping (String) -> Void) {
+private struct KeePassDatabaseSelection {
+    let path: String
+    let bookmark: Data?
+}
+
+private func chooseKeePassDatabase(_ completion: @escaping (KeePassDatabaseSelection) -> Void) {
     let panel = NSOpenPanel()
     panel.title = "Select KeePass Database"
     panel.message = "Choose a KeePassXC .kdbx database."
@@ -34,7 +39,12 @@ private func chooseKeePassDatabasePath(_ completion: @escaping (String) -> Void)
     panel.canChooseFiles = true
     panel.allowsMultipleSelection = false
     if panel.runModal() == .OK, let url = panel.url {
-        completion(url.path)
+        let bookmark = try? url.bookmarkData(
+            options: .withSecurityScope,
+            includingResourceValuesForKeys: nil,
+            relativeTo: nil
+        )
+        completion(KeePassDatabaseSelection(path: url.path, bookmark: bookmark))
     }
 }
 
@@ -1280,6 +1290,7 @@ private struct CredentialForm: View {
     @EnvironmentObject private var workspaceStore: SecureWorkspaceStore
     @State private var name = ""
     @State private var databasePath = ""
+    @State private var databaseBookmark: Data?
     @State private var entryPath = ""
 
     var body: some View {
@@ -1291,7 +1302,12 @@ private struct CredentialForm: View {
             HStack {
                 TextField("KeePass database (.kdbx)", text: $databasePath)
                     .textFieldStyle(.roundedBorder)
-                Button("Choose…") { chooseKeePassDatabasePath { databasePath = $0 } }
+                Button("Choose…") {
+                    chooseKeePassDatabase { selection in
+                        databasePath = selection.path
+                        databaseBookmark = selection.bookmark
+                    }
+                }
             }
             TextField("KeePass entry path (for example: Accounts/Operations/User/entry-title)", text: $entryPath)
                 .textFieldStyle(.roundedBorder)
@@ -1302,7 +1318,13 @@ private struct CredentialForm: View {
                 Button("Cancel") { workspaceStore.cancelCredentialCreation() }
                 Spacer()
                 Button("Add Credential") {
-                    workspaceStore.createCredential(name: name, username: "", databasePath: databasePath, entryPath: entryPath)
+                    workspaceStore.createCredential(
+                        name: name,
+                        username: "",
+                        databasePath: databasePath,
+                        databaseBookmark: databaseBookmark,
+                        entryPath: entryPath
+                    )
                 }
                 .buttonStyle(.borderedProminent)
                 .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || databasePath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || entryPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
@@ -1345,6 +1367,7 @@ private struct CredentialEditorForm: View {
     @EnvironmentObject private var workspaceStore: SecureWorkspaceStore
     @State private var name = ""
     @State private var databasePath = ""
+    @State private var databaseBookmark: Data?
     @State private var entryPath = ""
 
     var body: some View {
@@ -1356,7 +1379,12 @@ private struct CredentialEditorForm: View {
             HStack {
                 TextField("KeePass database (.kdbx)", text: $databasePath)
                     .textFieldStyle(.roundedBorder)
-                Button("Choose…") { chooseKeePassDatabasePath { databasePath = $0 } }
+                Button("Choose…") {
+                    chooseKeePassDatabase { selection in
+                        databasePath = selection.path
+                        databaseBookmark = selection.bookmark
+                    }
+                }
             }
             TextField("KeePass entry path (for example: Accounts/Operations/User/entry-title)", text: $entryPath)
                 .textFieldStyle(.roundedBorder)
@@ -1367,7 +1395,13 @@ private struct CredentialEditorForm: View {
                 Button("Cancel") { workspaceStore.cancelCredentialEditor() }
                 Spacer()
                 Button("Save") {
-                    workspaceStore.updateCredential(name: name, username: "", databasePath: databasePath, entryPath: entryPath)
+                    workspaceStore.updateCredential(
+                        name: name,
+                        username: "",
+                        databasePath: databasePath,
+                        databaseBookmark: databaseBookmark,
+                        entryPath: entryPath
+                    )
                 }
                 .buttonStyle(.borderedProminent)
                 .keyboardShortcut(.defaultAction)
@@ -1379,6 +1413,7 @@ private struct CredentialEditorForm: View {
         .onAppear {
             name = workspaceStore.editingCredential?.name ?? ""
             databasePath = workspaceStore.editingCredential?.keepassDatabasePath ?? ""
+            databaseBookmark = workspaceStore.editingCredential?.keepassDatabaseBookmark
             entryPath = workspaceStore.editingCredential?.keepassEntryPath ?? ""
         }
     }
