@@ -9,6 +9,22 @@ private func treeItemProvider(_ payload: String) -> NSItemProvider {
     NSItemProvider(object: payload as NSString)
 }
 
+private extension View {
+    /// Gives a double-click priority over a single-click selection. Keeping
+    /// these gestures exclusive prevents List rows from consuming the second
+    /// click as another selection instead of opening the selected item.
+    func treeItemTap(
+        onSingleClick: @escaping () -> Void,
+        onDoubleClick: @escaping () -> Void
+    ) -> some View {
+        gesture(
+            TapGesture(count: 2)
+                .onEnded(onDoubleClick)
+                .exclusively(before: TapGesture().onEnded(onSingleClick))
+        )
+    }
+}
+
 private func chooseKeePassDatabasePath(_ completion: @escaping (String) -> Void) {
     let panel = NSOpenPanel()
     panel.title = "Select KeePass Database"
@@ -874,16 +890,16 @@ private struct FolderList: View {
                     .help("\(connection.connectionType == .rdp ? "RDP" : "SSH"): \(connection.host):\(connection.port)")
                     .listRowInsets(EdgeInsets(top: 1, leading: 8, bottom: 1, trailing: 6))
                     .listRowBackground(treeSelectionBackground(for: connection.id))
-                    .simultaneousGesture(TapGesture().onEnded {
-                        workspaceStore.selectTreeItem(connection.id)
-                    })
-                    .onTapGesture(count: 2) {
-                        if connection.connectionType == .rdp {
-                            workspaceStore.launchRDPConnection(connection)
-                        } else {
-                            workspaceStore.selectSSHConnection(connection)
+                    .treeItemTap(
+                        onSingleClick: { workspaceStore.selectTreeItem(connection.id) },
+                        onDoubleClick: {
+                            if connection.connectionType == .rdp {
+                                workspaceStore.launchRDPConnection(connection)
+                            } else {
+                                workspaceStore.selectSSHConnection(connection)
+                            }
                         }
-                    }
+                    )
                     .contextMenu {
                         if connection.connectionType == .ssh {
                             Button("Edit…") { workspaceStore.showSSHConnectionEditor(connection) }
@@ -904,8 +920,10 @@ private struct FolderList: View {
                     .help(webLink.url)
                     .listRowInsets(EdgeInsets(top: 1, leading: 8, bottom: 1, trailing: 6))
                     .listRowBackground(treeSelectionBackground(for: webLink.id))
-                    .onTapGesture { workspaceStore.selectTreeItem(webLink.id) }
-                    .onTapGesture(count: 2) { workspaceStore.selectWebLink(webLink) }
+                    .treeItemTap(
+                        onSingleClick: { workspaceStore.selectTreeItem(webLink.id) },
+                        onDoubleClick: { workspaceStore.selectWebLink(webLink) }
+                    )
                     .contextMenu { webLinkMenu(webLink) }
                     .onDrag { treeItemProvider("web:\(webLink.id.uuidString)") }
             }
@@ -915,8 +933,10 @@ private struct FolderList: View {
                     .help(terminalCommand.command)
                     .listRowInsets(EdgeInsets(top: 1, leading: 8, bottom: 1, trailing: 6))
                     .listRowBackground(treeSelectionBackground(for: terminalCommand.id))
-                    .onTapGesture { workspaceStore.selectTreeItem(terminalCommand.id) }
-                    .onTapGesture(count: 2) { workspaceStore.launchTerminalCommand(terminalCommand) }
+                    .treeItemTap(
+                        onSingleClick: { workspaceStore.selectTreeItem(terminalCommand.id) },
+                        onDoubleClick: { workspaceStore.launchTerminalCommand(terminalCommand) }
+                    )
                     .contextMenu {
                         Button("Edit…") { workspaceStore.showTerminalCommandEditor(terminalCommand) }
                         Divider()
@@ -1087,14 +1107,16 @@ private struct GroupedSearchResults: View {
                     .contentShape(Rectangle())
                     .listRowInsets(EdgeInsets(top: 1, leading: 14, bottom: 1, trailing: 6))
                     .listRowBackground(workspaceStore.selectedTreeItemIDs.contains(connection.id) ? Color.accentColor.opacity(0.72) : .clear)
-                    .onTapGesture { workspaceStore.selectTreeItem(connection.id) }
-                    .onTapGesture(count: 2) {
-                        if connection.connectionType == .rdp {
-                            workspaceStore.launchRDPConnection(connection)
-                        } else {
-                            workspaceStore.selectSSHConnection(connection)
+                    .treeItemTap(
+                        onSingleClick: { workspaceStore.selectTreeItem(connection.id) },
+                        onDoubleClick: {
+                            if connection.connectionType == .rdp {
+                                workspaceStore.launchRDPConnection(connection)
+                            } else {
+                                workspaceStore.selectSSHConnection(connection)
+                            }
                         }
-                    }
+                    )
                     .contextMenu {
                         if connection.connectionType == .rdp {
                             Button("Edit…") { workspaceStore.showRDPConnectionEditor(connection) }
@@ -1117,8 +1139,10 @@ private struct GroupedSearchResults: View {
                         .contentShape(Rectangle())
                         .listRowInsets(EdgeInsets(top: 1, leading: 14, bottom: 1, trailing: 6))
                         .listRowBackground(workspaceStore.selectedTreeItemIDs.contains(webLink.id) ? Color.accentColor.opacity(0.72) : .clear)
-                        .onTapGesture { workspaceStore.selectTreeItem(webLink.id) }
-                        .onTapGesture(count: 2) { workspaceStore.selectWebLink(webLink) }
+                        .treeItemTap(
+                            onSingleClick: { workspaceStore.selectTreeItem(webLink.id) },
+                            onDoubleClick: { workspaceStore.selectWebLink(webLink) }
+                        )
                 }
 
                 ForEach(group.terminalCommands) { command in
@@ -1129,8 +1153,10 @@ private struct GroupedSearchResults: View {
                         .contentShape(Rectangle())
                         .listRowInsets(EdgeInsets(top: 1, leading: 14, bottom: 1, trailing: 6))
                         .listRowBackground(workspaceStore.selectedTreeItemIDs.contains(command.id) ? Color.accentColor.opacity(0.72) : .clear)
-                        .onTapGesture { workspaceStore.selectTreeItem(command.id) }
-                        .onTapGesture(count: 2) { workspaceStore.launchTerminalCommand(command) }
+                        .treeItemTap(
+                            onSingleClick: { workspaceStore.selectTreeItem(command.id) },
+                            onDoubleClick: { workspaceStore.launchTerminalCommand(command) }
+                        )
                 }
             }
         }
@@ -1717,16 +1743,16 @@ private struct FolderTreeRow: View {
                         .font(.system(size: 12, weight: .regular))
                         .listRowInsets(EdgeInsets(top: 1, leading: 8, bottom: 1, trailing: 6))
                         .listRowBackground(workspaceStore.selectedTreeItemIDs.contains(connection.id) ? Color.accentColor.opacity(0.72) : .clear)
-                        .simultaneousGesture(TapGesture().onEnded {
-                            workspaceStore.selectTreeItem(connection.id)
-                        })
-                        .onTapGesture(count: 2) {
-                            if connection.connectionType == .rdp {
-                                workspaceStore.launchRDPConnection(connection)
-                            } else {
-                                workspaceStore.selectSSHConnection(connection)
+                        .treeItemTap(
+                            onSingleClick: { workspaceStore.selectTreeItem(connection.id) },
+                            onDoubleClick: {
+                                if connection.connectionType == .rdp {
+                                    workspaceStore.launchRDPConnection(connection)
+                                } else {
+                                    workspaceStore.selectSSHConnection(connection)
+                                }
                             }
-                        }
+                        )
                         .contextMenu { connectionMenu(connection) }
                         .onDrag {
                             treeItemProvider("ssh:\(connection.id.uuidString)")
@@ -1742,8 +1768,10 @@ private struct FolderTreeRow: View {
                     .font(.system(size: 12, weight: .regular))
                     .listRowInsets(EdgeInsets(top: 1, leading: 8, bottom: 1, trailing: 6))
                     .listRowBackground(workspaceStore.selectedTreeItemIDs.contains(webLink.id) ? Color.accentColor.opacity(0.72) : .clear)
-                    .onTapGesture { workspaceStore.selectTreeItem(webLink.id) }
-                    .onTapGesture(count: 2) { workspaceStore.selectWebLink(webLink) }
+                    .treeItemTap(
+                        onSingleClick: { workspaceStore.selectTreeItem(webLink.id) },
+                        onDoubleClick: { workspaceStore.selectWebLink(webLink) }
+                    )
                     .contextMenu {
                         Button("Edit…") { workspaceStore.showWebLinkEditor(webLink) }
                         Button(workspaceStore.isQuickAccess(webLink) ? "Remove from Quick Access" : "Add to Quick Access") {
@@ -1764,8 +1792,10 @@ private struct FolderTreeRow: View {
                     .font(.system(size: 12, weight: .regular))
                     .listRowInsets(EdgeInsets(top: 1, leading: 8, bottom: 1, trailing: 6))
                     .listRowBackground(workspaceStore.selectedTreeItemIDs.contains(terminalCommand.id) ? Color.accentColor.opacity(0.72) : .clear)
-                    .onTapGesture { workspaceStore.selectTreeItem(terminalCommand.id) }
-                    .onTapGesture(count: 2) { workspaceStore.launchTerminalCommand(terminalCommand) }
+                    .treeItemTap(
+                        onSingleClick: { workspaceStore.selectTreeItem(terminalCommand.id) },
+                        onDoubleClick: { workspaceStore.launchTerminalCommand(terminalCommand) }
+                    )
                     .contextMenu {
                         Button("Edit…") { workspaceStore.showTerminalCommandEditor(terminalCommand) }
                         Divider()

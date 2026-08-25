@@ -27,7 +27,7 @@ targets:
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_KEY_CFBundleDisplayName: GateTree
         INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.utilities
-        INFOPLIST_KEY_NSAppleEventsUsageDescription: GateTree activates the selected Google Chrome tab for a bookmarked web link.
+        INFOPLIST_KEY_NSAppleEventsUsageDescription: GateTree needs permission to open bookmarked web links in Google Chrome and run saved commands in Terminal.
         INFOPLIST_KEY_NSLocalNetworkUsageDescription: GateTree connects to local and remote systems over SSH and RDP.
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         # Xcode cloud signing supplies the App Store identity and profile in CI.
