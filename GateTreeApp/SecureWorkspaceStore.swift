@@ -308,6 +308,29 @@ final class SecureWorkspaceStore: ObservableObject {
         }
     }
 
+    /// Prepare the unlocked workspace resources before opening a connection.
+    func prepareConnectionResourcesAtLaunch() {
+        guard isUnlocked else { return }
+        if let credential = credentials.first(where: { !$0.keepassDatabasePath.isEmpty }) {
+            if FileManager.default.fileExists(atPath: cachedKeePassDatabaseURL(for: credential).path) {
+                return
+            }
+            let existingAccess = securityScopedDatabaseURL(
+                for: URL(fileURLWithPath: credential.keepassDatabasePath),
+                bookmark: credential.keepassDatabaseBookmark
+            )
+            if let existingAccess {
+                defer { existingAccess.stopAccessingSecurityScopedResource() }
+                cacheKeePassDatabase(from: existingAccess, for: credential)
+            } else {
+                _ = requestKeePassDatabaseAccess(
+                    for: credential,
+                    suggestedURL: URL(fileURLWithPath: credential.keepassDatabasePath)
+                )
+            }
+        }
+    }
+
     func save() {
         guard !isProcessing else { return }
 
@@ -1085,6 +1108,12 @@ final class SecureWorkspaceStore: ObservableObject {
         let host = connection.host.trimmingCharacters(in: .whitespacesAndNewlines)
         let inheritedCredential = effectiveCredential(for: connection)
         let entry = inheritedCredential.flatMap(keepassEntry(for:))
+        // Do not start an SSH process without the assigned KeePass password.
+        // Otherwise OpenSSH produces a misleading authentication failure and
+        // makes it look as if GateTree sent an incorrect password.
+        if inheritedCredential != nil, entry == nil {
+            return
+        }
         let username = connection.username.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             ? (entry?.username ?? inheritedCredential?.username ?? "")
             : connection.username.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1092,23 +1121,20 @@ final class SecureWorkspaceStore: ObservableObject {
             errorMessage = "This SSH connection has no host or IP address."
             return
         }
-        if username.isEmpty {
-            pendingSSHConnection = connection
-            promptedSSHUsername = ""
-            isShowingSSHUsernamePrompt = true
-        } else {
-            let sessionConnection = SSHConnection(
-                id: connection.id,
-                name: connection.name,
-                host: connection.host,
-                username: username,
-                port: connection.port,
-                credentialID: connection.credentialID,
-                tags: connection.tags,
-                localTunnel: connection.localTunnel
-            )
-            activateSSHConnection(sessionConnection, password: entry?.password)
-        }
+        // Leave an empty username untouched. OpenSSH can then apply the User
+        // value from the imported ~/.ssh/config (or its normal default) rather
+        // than blocking the connection on a GateTree-specific prompt.
+        let sessionConnection = SSHConnection(
+            id: connection.id,
+            name: connection.name,
+            host: connection.host,
+            username: username,
+            port: connection.port,
+            credentialID: connection.credentialID,
+            tags: connection.tags,
+            localTunnel: connection.localTunnel
+        )
+        activateSSHConnection(sessionConnection, password: entry?.password)
     }
 
     func connectWithPromptedSSHUsername() {
@@ -1924,16 +1950,20 @@ final class SecureWorkspaceStore: ObservableObject {
             return nil
         }
         let databaseURL = URL(fileURLWithPath: databasePath)
-        let requiresScopedAccess = credential.keepassDatabaseBookmark != nil
-            || !FileManager.default.isReadableFile(atPath: databaseURL.path)
-        var securityScopedURL = securityScopedDatabaseURL(for: databaseURL, bookmark: credential.keepassDatabaseBookmark)
-        if securityScopedURL == nil, requiresScopedAccess {
-            securityScopedURL = requestKeePassDatabaseAccess(for: credential, suggestedURL: databaseURL)
+        let cachedURL = cachedKeePassDatabaseURL(for: credential)
+        var securityScopedURL: URL?
+        if !FileManager.default.fileExists(atPath: cachedURL.path) {
+            securityScopedURL = securityScopedDatabaseURL(for: databaseURL, bookmark: credential.keepassDatabaseBookmark)
+            if let securityScopedURL {
+                cacheKeePassDatabase(from: securityScopedURL, for: credential)
+            } else {
+                securityScopedURL = requestKeePassDatabaseAccess(for: credential, suggestedURL: databaseURL)
+            }
         }
         defer {
             securityScopedURL?.stopAccessingSecurityScopedResource()
         }
-        guard !requiresScopedAccess || securityScopedURL != nil else {
+        guard FileManager.default.fileExists(atPath: cachedURL.path) else {
             errorMessage = "GateTree needs permission to read \(databaseURL.lastPathComponent). Choose the KeePass database to continue."
             return nil
         }
@@ -1947,7 +1977,7 @@ final class SecureWorkspaceStore: ObservableObject {
         }
         do {
             return try KeePassXCProvider.readEntry(
-                databaseURL: securityScopedURL ?? databaseURL,
+                databaseURL: cachedURL,
                 entryPath: entryPath,
                 masterPassword: password
             )
@@ -1966,36 +1996,67 @@ final class SecureWorkspaceStore: ObservableObject {
             options: .withSecurityScope,
             relativeTo: nil,
             bookmarkDataIsStale: &isStale
-        ), bookmarkedURL.standardizedFileURL == url.standardizedFileURL else {
+        ) else {
             return nil
         }
         return bookmarkedURL.startAccessingSecurityScopedResource() ? bookmarkedURL : nil
     }
 
     private func requestKeePassDatabaseAccess(for credential: Credential, suggestedURL: URL) -> URL? {
+        let introduction = NSAlert()
+        introduction.messageText = "Connect your KeePass database"
+        introduction.informativeText = "GateTree needs your KeePassXC database to retrieve the credential for this connection. It imports a protected working copy into GateTree's private storage; your original database is never modified."
+        introduction.alertStyle = .informational
+        introduction.addButton(withTitle: "Choose KeePass database…")
+        introduction.addButton(withTitle: "Not now")
+        guard introduction.runModal() == .alertFirstButtonReturn else { return nil }
+
         let panel = NSOpenPanel()
-        panel.title = "Allow KeePass Database Access"
-        panel.message = "Choose \(suggestedURL.lastPathComponent) so GateTree can read it."
+        panel.title = "Choose KeePass Database"
+        panel.message = "Select \(suggestedURL.lastPathComponent)"
         panel.directoryURL = suggestedURL.deletingLastPathComponent()
         panel.allowedContentTypes = [UTType(filenameExtension: "kdbx")].compactMap { $0 }
         panel.canChooseDirectories = false
         panel.canChooseFiles = true
         panel.allowsMultipleSelection = false
         guard panel.runModal() == .OK, let url = panel.url else { return nil }
-        guard let bookmark = try? url.bookmarkData(
+        let bookmark = try? url.bookmarkData(
             options: .withSecurityScope,
             includingResourceValuesForKeys: nil,
             relativeTo: nil
-        ) else {
-            errorMessage = "GateTree could not save permission for \(url.lastPathComponent)."
-            return nil
-        }
+        )
         guard let index = credentials.firstIndex(where: { $0.id == credential.id }) else { return nil }
         credentials[index].keepassDatabasePath = url.path
         credentials[index].keepassDatabaseBookmark = bookmark
         synchronizeWorkspace()
         save()
-        return url.startAccessingSecurityScopedResource() ? url : nil
+        // An NSOpenPanel selection grants this sandbox process access to the
+        // selected item immediately.  On cloud-provider paths (notably
+        // OneDrive), startAccessingSecurityScopedResource may return false
+        // even though that direct selection grant is valid.  Keep the
+        // bookmark for subsequent launches and use the selected URL now.
+        guard cacheKeePassDatabase(from: url, for: credential) else { return nil }
+        _ = url.startAccessingSecurityScopedResource()
+        return url
+    }
+
+    private func cachedKeePassDatabaseURL(for credential: Credential) -> URL {
+        let directory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("GateTree/KeePass", isDirectory: true)
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        return directory.appendingPathComponent("\(credential.id.uuidString).kdbx")
+    }
+
+    @discardableResult
+    private func cacheKeePassDatabase(from sourceURL: URL, for credential: Credential) -> Bool {
+        do {
+            let data = try Data(contentsOf: sourceURL)
+            try data.write(to: cachedKeePassDatabaseURL(for: credential), options: .atomic)
+            return true
+        } catch {
+            errorMessage = "GateTree could not import \(sourceURL.lastPathComponent)."
+            return false
+        }
     }
 
     private func promptForKeePassMasterPassword(databasePath: String) -> String? {

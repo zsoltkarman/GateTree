@@ -55,6 +55,7 @@ struct ContentView: View {
     @State private var sidebarWidth: CGFloat?
     @State private var sidebarDragStartWidth: CGFloat?
     @State private var isSearchHelpPresented = false
+    @State private var didPrepareConnectionResources = false
 
     var body: some View {
         Group {
@@ -319,6 +320,20 @@ struct ContentView: View {
         }
         .sheet(isPresented: $workspaceStore.isShowingHelp) {
             GateTreeAboutView()
+        }
+        .onAppear {
+            prepareConnectionResourcesIfNeeded()
+        }
+        .onChange(of: workspaceStore.isUnlocked) { _ in
+            prepareConnectionResourcesIfNeeded()
+        }
+    }
+
+    private func prepareConnectionResourcesIfNeeded() {
+        guard workspaceStore.isUnlocked, !didPrepareConnectionResources else { return }
+        didPrepareConnectionResources = true
+        DispatchQueue.main.async {
+            workspaceStore.prepareConnectionResourcesAtLaunch()
         }
     }
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Builds the app locally with the same Release configuration and verifies the
-# sandbox-critical metadata used by the TestFlight archive. It never uploads.
+# Builds the app locally with the same Release configuration as the notarized
+# Developer ID DMG. It never uploads.
 set -euo pipefail
 
 root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -24,8 +24,11 @@ entitlements="$(codesign -d --entitlements :- "$app_path" 2>&1)"
 plutil -extract CFBundleIdentifier raw "$info_plist" | grep -qx 'com.gatetree.app'
 plutil -extract CFBundleShortVersionString raw "$info_plist" | grep -qx "$(tr -d '[:space:]' < VERSION)"
 plutil -extract ITSAppUsesNonExemptEncryption raw "$info_plist" | grep -qx 'false'
-grep -q '<key>com.apple.security.app-sandbox</key><true/>' <<< "$entitlements"
 grep -q '<key>com.apple.security.network.client</key><true/>' <<< "$entitlements"
-grep -q '<key>com.apple.security.files.user-selected.read-only</key><true/>' <<< "$entitlements"
 
-echo "TestFlight parity checks passed: $app_path"
+if grep -q '<key>com.apple.security.app-sandbox</key><true/>' <<< "$entitlements"; then
+  echo "ERROR: GateTree must not be sandboxed in Developer ID mode." >&2
+  exit 1
+fi
+
+echo "Developer ID parity checks passed: $app_path"

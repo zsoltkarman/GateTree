@@ -110,8 +110,9 @@ Apple notarization profile named `GateTree-notary` (or set
 ## Automated GitHub releases
 
 Pushing a tag matching `VERSION`, such as `v0.2.3`, starts the GitHub Actions
-release workflow on a macOS 15 runner. It builds a DMG, attaches it to a
-GitHub Release, and uploads a separate App Store-signed build to TestFlight.
+release workflow on a macOS 15 runner. It builds a notarized Developer ID DMG
+and attaches it to a GitHub Release. GateTree is distributed directly, not
+through App Store Connect or TestFlight.
 Create a checked release tag with:
 
 ```zsh
@@ -133,19 +134,7 @@ For signed, notarized public releases, configure these GitHub Actions secrets:
 The workflow imports the certificate only into the temporary GitHub runner
 keychain and creates a temporary `GateTree-notary` profile from the API key.
 
-For TestFlight, create an `app-store` GitHub environment and add these
-environment secrets:
-
-- `APPLE_API_KEY_ID`, `APPLE_API_ISSUER_ID`, `APPLE_API_PRIVATE_KEY` — App
-  Store Connect API key details.
-
-The TestFlight job uses Xcode cloud signing for the App Store archive, so the
-Apple distribution certificates and provisioning profile remain managed by
-Apple instead of being copied into CI.
-
-The TestFlight build number is derived from the GitHub Actions run, so a
-re-run receives a distinct build number. The App Store Connect record and App
-ID must use `com.gatetree.app` under Apple team `PZ6YC7GM6J`.
+The public download is the DMG attached to the GitHub Release.
 
 ## RDP notes
 

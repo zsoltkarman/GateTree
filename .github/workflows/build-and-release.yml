@@ -18,6 +18,7 @@ jobs:
     name: Build macOS release
     # XcodeGen 2.46 emits Xcode 16 project format (77).
     runs-on: macos-15
+    environment: developer-id
 
     steps:
       - name: Check out source
@@ -107,6 +108,23 @@ jobs:
           path: .dist/GateTree-${{ steps.version.outputs.value }}.dmg
           if-no-files-found: error
 
+      - name: Generate signed Sparkle appcast
+        env:
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+        run: |
+          : "${SPARKLE_PRIVATE_KEY:?SPARKLE_PRIVATE_KEY is required}"
+          VERSION="${{ steps.version.outputs.value }}"
+          updates="$RUNNER_TEMP/sparkle-updates"
+          mkdir -p "$updates"
+          cp ".dist/GateTree-$VERSION.dmg" "$updates/"
+          printf '%s' "$SPARKLE_PRIVATE_KEY" | \
+            .build-release/SourcePackages/artifacts/sparkle/Sparkle/bin/generate_appcast \
+            --ed-key-file - \
+            --download-url-prefix "https://github.com/zsoltkarman/GateTree/releases/download/$VERSION" \
+            -o appcast.xml \
+            "$updates"
+          cp "$updates/appcast.xml" .dist/appcast.xml
+
       - name: Create GitHub Release
         if: github.event_name == 'push'
         env:
@@ -116,12 +134,14 @@ jobs:
           if ! gh release view "$VERSION" >/dev/null 2>&1; then
             gh release create "$VERSION" --title "GateTree $VERSION" --generate-notes
           fi
-          gh release upload "$VERSION" ".dist/GateTree-$VERSION.dmg" --clobber
+          gh release upload "$VERSION" ".dist/GateTree-$VERSION.dmg" .dist/appcast.xml --clobber
 
   testflight:
+    # GateTree is distributed as a notarized Developer ID DMG. Keep this job
+    # disabled so a GitHub release can never upload an App Store build.
+    if: false
     name: Upload macOS build to TestFlight
     needs: build
-    if: github.event_name == 'push'
     runs-on: macos-15
     environment: app-store
 
