@@ -81,7 +81,7 @@ that should not be readable at rest.
 ## Build from source
 
 ```zsh
-xcodegen generate
+./build/generate-project.sh
 xcodebuild -project GateTree.xcodeproj \
   -scheme GateTree \
   -configuration Debug \
@@ -91,6 +91,10 @@ open .build-xcode/Build/Products/Debug/GateTree.app
 
 The generated project and `.build-xcode` directory are local build output and
 are intentionally ignored by Git.
+
+`VERSION` is the single source of truth for the app's release version. The
+project-generation helper reads it and supplies the matching marketing version
+to XcodeGen.
 
 ## Create a distributable DMG
 

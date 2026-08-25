@@ -48,7 +48,7 @@ rm -rf "$BUILD_DIR" "$DIST_DIR"
 mkdir -p "$DIST_DIR"
 
 echo "==> Generating Xcode project"
-xcodegen generate
+"$PROJECT_ROOT/build/generate-project.sh"
 
 echo "==> Building Release ($SIGN_MODE signing)"
 RDP_CFLAGS="$(pkg-config --cflags freerdp-client3 openssl)"

@@ -179,7 +179,7 @@ jobs:
             <key>uploadSymbols</key><true/>
           </dict></plist>
           EOF
-          xcodegen generate
+          ./build/generate-project.sh
           RDP_CFLAGS="$(pkg-config --cflags freerdp-client3 openssl)"
           RDP_LDFLAGS="$(pkg-config --libs freerdp-client3 openssl)"
           BUILD_ARCH="$(uname -m)"
