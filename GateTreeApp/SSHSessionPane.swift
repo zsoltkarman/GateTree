@@ -4,6 +4,23 @@ import AppKit
 import SwiftTerm
 import SwiftUI
 
+/// Stores SSH host fingerprints in GateTree's sandbox container instead of the
+/// user's `~/.ssh/known_hosts`, which a TestFlight build is not allowed to read.
+private enum GateTreeSSHHostKeyStore {
+    static func knownHostsURL() -> URL {
+        let manager = FileManager.default
+        let directory = manager.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("GateTree", isDirectory: true)
+        try? manager.createDirectory(at: directory, withIntermediateDirectories: true)
+
+        let fileURL = directory.appendingPathComponent("known_hosts")
+        if !manager.fileExists(atPath: fileURL.path) {
+            manager.createFile(atPath: fileURL.path, contents: nil, attributes: [.posixPermissions: 0o600])
+        }
+        return fileURL
+    }
+}
+
 struct SSHSessionPane: View {
     let connection: SSHConnection
     let password: String?
@@ -55,7 +72,13 @@ private struct EmbeddedSSHTerminal: NSViewRepresentable {
     func makeNSView(context: Context) -> LocalProcessTerminalView {
         let terminal = GateTreeTerminalView(frame: .zero)
         terminal.font = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
-        var arguments = ["-p", String(connection.port)]
+        let knownHostsURL = GateTreeSSHHostKeyStore.knownHostsURL()
+        var arguments = [
+            "-p", String(connection.port),
+            "-o", "UserKnownHostsFile=\(knownHostsURL.path)",
+            "-o", "GlobalKnownHostsFile=/dev/null",
+            "-o", "StrictHostKeyChecking=accept-new"
+        ]
         if !connection.username.isEmpty {
             arguments += ["-l", connection.username]
         }

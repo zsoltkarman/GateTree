@@ -7,6 +7,7 @@ import Darwin
 import Foundation
 import Security
 import AppKit
+import UniformTypeIdentifiers
 
 @MainActor
 final class SecureWorkspaceStore: ObservableObject {
@@ -1915,6 +1916,20 @@ final class SecureWorkspaceStore: ObservableObject {
             errorMessage = "Credential \(credential.name) has no KeePassXC database or entry path."
             return nil
         }
+        let databaseURL = URL(fileURLWithPath: databasePath)
+        let requiresScopedAccess = credential.keepassDatabaseBookmark != nil
+            || !FileManager.default.isReadableFile(atPath: databaseURL.path)
+        var securityScopedURL = securityScopedDatabaseURL(for: databaseURL, bookmark: credential.keepassDatabaseBookmark)
+        if securityScopedURL == nil, requiresScopedAccess {
+            securityScopedURL = requestKeePassDatabaseAccess(for: credential, suggestedURL: databaseURL)
+        }
+        defer {
+            securityScopedURL?.stopAccessingSecurityScopedResource()
+        }
+        guard !requiresScopedAccess || securityScopedURL != nil else {
+            errorMessage = "GateTree needs permission to read \(databaseURL.lastPathComponent). Choose the KeePass database to continue."
+            return nil
+        }
         let password: String
         if let cached = keepassMasterPasswords[databasePath] {
             password = cached
@@ -1922,19 +1937,6 @@ final class SecureWorkspaceStore: ObservableObject {
             guard let entered = promptForKeePassMasterPassword(databasePath: databasePath) else { return nil }
             password = entered
             keepassMasterPasswords[databasePath] = password
-        }
-        let databaseURL = URL(fileURLWithPath: databasePath)
-        let securityScopedURL = securityScopedDatabaseURL(for: databaseURL, bookmark: credential.keepassDatabaseBookmark)
-        defer {
-            securityScopedURL?.stopAccessingSecurityScopedResource()
-        }
-        if credential.keepassDatabaseBookmark != nil && securityScopedURL == nil {
-            errorMessage = "GateTree no longer has permission to read \(databaseURL.lastPathComponent). Edit the credential and choose the KeePass database again."
-            return nil
-        }
-        if credential.keepassDatabaseBookmark == nil && !FileManager.default.isReadableFile(atPath: databaseURL.path) {
-            errorMessage = "GateTree needs permission to read \(databaseURL.lastPathComponent). Edit the credential and choose the KeePass database again."
-            return nil
         }
         do {
             return try KeePassXCProvider.readEntry(
@@ -1961,6 +1963,32 @@ final class SecureWorkspaceStore: ObservableObject {
             return nil
         }
         return bookmarkedURL.startAccessingSecurityScopedResource() ? bookmarkedURL : nil
+    }
+
+    private func requestKeePassDatabaseAccess(for credential: Credential, suggestedURL: URL) -> URL? {
+        let panel = NSOpenPanel()
+        panel.title = "Allow KeePass Database Access"
+        panel.message = "Choose \(suggestedURL.lastPathComponent) so GateTree can read it."
+        panel.directoryURL = suggestedURL.deletingLastPathComponent()
+        panel.allowedContentTypes = [UTType(filenameExtension: "kdbx")].compactMap { $0 }
+        panel.canChooseDirectories = false
+        panel.canChooseFiles = true
+        panel.allowsMultipleSelection = false
+        guard panel.runModal() == .OK, let url = panel.url else { return nil }
+        guard let bookmark = try? url.bookmarkData(
+            options: .withSecurityScope,
+            includingResourceValuesForKeys: nil,
+            relativeTo: nil
+        ) else {
+            errorMessage = "GateTree could not save permission for \(url.lastPathComponent)."
+            return nil
+        }
+        guard let index = credentials.firstIndex(where: { $0.id == credential.id }) else { return nil }
+        credentials[index].keepassDatabasePath = url.path
+        credentials[index].keepassDatabaseBookmark = bookmark
+        synchronizeWorkspace()
+        save()
+        return url.startAccessingSecurityScopedResource() ? url : nil
     }
 
     private func promptForKeePassMasterPassword(databasePath: String) -> String? {
@@ -2347,7 +2375,7 @@ struct Credential: Codable, Identifiable, Hashable, Sendable {
         self.keepassEntryPath = keepassEntryPath
     }
 
-    enum CodingKeys: String, CodingKey { case id, name, username, keepassDatabasePath, keepassEntryPath, keepassEntryUUID }
+    enum CodingKeys: String, CodingKey { case id, name, username, keepassDatabasePath, keepassDatabaseBookmark, keepassEntryPath, keepassEntryUUID }
 
     init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
@@ -2355,6 +2383,7 @@ struct Credential: Codable, Identifiable, Hashable, Sendable {
         name = try values.decode(String.self, forKey: .name)
         username = try values.decodeIfPresent(String.self, forKey: .username) ?? ""
         keepassDatabasePath = try values.decodeIfPresent(String.self, forKey: .keepassDatabasePath) ?? ""
+        keepassDatabaseBookmark = try values.decodeIfPresent(Data.self, forKey: .keepassDatabaseBookmark)
         keepassEntryPath = try values.decodeIfPresent(String.self, forKey: .keepassEntryPath)
             ?? values.decodeIfPresent(String.self, forKey: .keepassEntryUUID)
             ?? ""
@@ -2366,6 +2395,7 @@ struct Credential: Codable, Identifiable, Hashable, Sendable {
         try values.encode(name, forKey: .name)
         try values.encode(username, forKey: .username)
         try values.encode(keepassDatabasePath, forKey: .keepassDatabasePath)
+        try values.encodeIfPresent(keepassDatabaseBookmark, forKey: .keepassDatabaseBookmark)
         try values.encode(keepassEntryPath, forKey: .keepassEntryPath)
     }
 }
