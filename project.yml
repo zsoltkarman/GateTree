@@ -9,6 +9,23 @@ packages:
   SwiftTerm:
     url: https://github.com/migueldeicaza/SwiftTerm
     from: "1.2.0"
+schemes:
+  GateTree:
+    build:
+      targets:
+        GateTree: all
+    # ⌘R deliberately runs the production configuration so local testing
+    # exercises the same sandboxed app settings as the TestFlight archive.
+    run:
+      config: Release
+    test:
+      config: Release
+    profile:
+      config: Release
+    analyze:
+      config: Release
+    archive:
+      config: Release
 targets:
   GateTree:
     type: application
@@ -55,5 +72,3 @@ targets:
           - -lfreerdp3
           - -lwinpr3
           - -lcrypto
-    scheme:
-      testTargets: []
