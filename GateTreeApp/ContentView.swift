@@ -604,6 +604,8 @@ private struct ChromeLinkPane: View {
             .padding(28)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color(nsColor: .windowBackgroundColor))
     }
 }
 
@@ -1649,6 +1651,12 @@ private struct EmbeddedWebPane: View {
             .padding(.vertical, 10)
             Divider()
             EmbeddedWebView(url: URL(string: webLink.url))
+                .background(Color(nsColor: .textBackgroundColor))
+                .overlay(alignment: .top) {
+                    Rectangle()
+                        .fill(Color(nsColor: .separatorColor))
+                        .frame(height: 1)
+                }
         }
     }
 }
@@ -1658,6 +1666,10 @@ private struct EmbeddedWebView: NSViewRepresentable {
 
     func makeNSView(context: Context) -> WKWebView {
         let webView = WKWebView(frame: .zero)
+        // Keep a loaded page visually distinct from GateTree in both light and
+        // dark mode. Without an under-page colour WebKit can briefly (or for
+        // transparent pages permanently) render as a black, blended surface.
+        webView.underPageBackgroundColor = .textBackgroundColor
         if let url { webView.load(URLRequest(url: url)) }
         return webView
     }

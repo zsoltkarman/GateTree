@@ -1267,6 +1267,8 @@ final class SecureWorkspaceStore: ObservableObject {
         selectedSSHPassword = nil
         isShowingCredentials = false
         selectedWebLink = nil
+        activeSessionID = nil
+        activeSessionProtocol = nil
         activeExternalWebLink = webLink
         if !openExternalWebLinks.contains(where: { $0.id == webLink.id }) {
             openExternalWebLinks.append(webLink)
@@ -1395,6 +1397,9 @@ final class SecureWorkspaceStore: ObservableObject {
         openExternalWebLinks.removeAll { $0.id == id }
         guard activeExternalWebLink?.id == id else { return }
         activeExternalWebLink = openExternalWebLinks.last
+        if activeExternalWebLink == nil {
+            activateNextOpenPane()
+        }
     }
 
     func selectOpenExternalWebLink(_ webLink: WebLink) {
@@ -1402,6 +1407,8 @@ final class SecureWorkspaceStore: ObservableObject {
         activeExternalWebLink = webLink
         selectedSSHConnection = nil
         selectedSSHPassword = nil
+        activeSessionID = nil
+        activeSessionProtocol = nil
         activateChromeTab(for: webLink)
     }
 
