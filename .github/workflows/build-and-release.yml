@@ -123,7 +123,7 @@ jobs:
             --download-url-prefix "https://github.com/zsoltkarman/GateTree/releases/download/$VERSION" \
             -o appcast.xml \
             "$updates"
-          cp "$updates/appcast.xml" .dist/appcast.xml
+          mv appcast.xml .dist/appcast.xml
 
       - name: Create GitHub Release
         if: github.event_name == 'push'
