@@ -120,7 +120,7 @@ jobs:
           printf '%s' "$SPARKLE_PRIVATE_KEY" | \
             .build-release/SourcePackages/artifacts/sparkle/Sparkle/bin/generate_appcast \
             --ed-key-file - \
-            --download-url-prefix "https://github.com/zsoltkarman/GateTree/releases/download/$VERSION" \
+            --download-url-prefix "https://github.com/zsoltkarman/GateTree/releases/download/$VERSION/" \
             -o appcast.xml \
             "$updates"
           mv appcast.xml .dist/appcast.xml
