@@ -9,6 +9,7 @@ final class GateTreeUpdater: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         controller = SPUStandardUpdaterController(startingUpdater: true, updaterDelegate: nil, userDriverDelegate: nil)
+        controller.updater.automaticallyDownloadsUpdates = false
         controller.updater.checkForUpdatesInBackground()
     }
 
