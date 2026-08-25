@@ -21,6 +21,49 @@ private enum GateTreeSSHHostKeyStore {
     }
 }
 
+/// Grants the sandboxed app explicit access to the user's OpenSSH config.
+/// OpenSSH then receives it through `-F`, so existing Host / ProxyJump rules
+/// continue to work in a TestFlight build.
+private enum GateTreeSSHConfigStore {
+    private static let bookmarkKey = "GateTree.sshConfigBookmark"
+
+    static func beginAccess() -> URL? {
+        if let bookmark = UserDefaults.standard.data(forKey: bookmarkKey),
+           let url = resolve(bookmark), url.startAccessingSecurityScopedResource() {
+            return url
+        }
+
+        let panel = NSOpenPanel()
+        panel.title = "Allow SSH Configuration Access"
+        panel.message = "Choose ~/.ssh/config so GateTree can use your SSH hosts and gateways."
+        panel.directoryURL = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".ssh", isDirectory: true)
+        panel.canChooseDirectories = false
+        panel.canChooseFiles = true
+        panel.allowsMultipleSelection = false
+        guard panel.runModal() == .OK, let url = panel.url,
+              let bookmark = try? url.bookmarkData(
+                options: .withSecurityScope,
+                includingResourceValuesForKeys: nil,
+                relativeTo: nil
+              ) else {
+            return nil
+        }
+        UserDefaults.standard.set(bookmark, forKey: bookmarkKey)
+        return url.startAccessingSecurityScopedResource() ? url : nil
+    }
+
+    private static func resolve(_ bookmark: Data) -> URL? {
+        var isStale = false
+        return try? URL(
+            resolvingBookmarkData: bookmark,
+            options: .withSecurityScope,
+            relativeTo: nil,
+            bookmarkDataIsStale: &isStale
+        )
+    }
+}
+
 struct SSHSessionPane: View {
     let connection: SSHConnection
     let password: String?
@@ -72,16 +115,27 @@ private struct EmbeddedSSHTerminal: NSViewRepresentable {
     let password: String?
     let isActive: Bool
 
+    final class Coordinator {
+        var sshConfigURL: URL?
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
     func makeNSView(context: Context) -> LocalProcessTerminalView {
         let terminal = GateTreeTerminalView(frame: .zero)
         terminal.font = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
         let knownHostsURL = GateTreeSSHHostKeyStore.knownHostsURL()
+        let sshConfigURL = GateTreeSSHConfigStore.beginAccess()
+        context.coordinator.sshConfigURL = sshConfigURL
         var arguments = [
             "-p", String(connection.port),
             "-o", "UserKnownHostsFile=\(knownHostsURL.path)",
             "-o", "GlobalKnownHostsFile=/dev/null",
             "-o", "StrictHostKeyChecking=accept-new"
         ]
+        if let sshConfigURL {
+            arguments += ["-F", sshConfigURL.path]
+        }
         if password?.isEmpty == false {
             arguments += [
                 "-o", "PubkeyAuthentication=no",
@@ -110,6 +164,11 @@ private struct EmbeddedSSHTerminal: NSViewRepresentable {
             DispatchQueue.main.async { terminal.window?.makeFirstResponder(terminal) }
         }
         return terminal
+    }
+
+    static func dismantleNSView(_ terminal: LocalProcessTerminalView, coordinator: Coordinator) {
+        coordinator.sshConfigURL?.stopAccessingSecurityScopedResource()
+        terminal.terminate()
     }
 
     func updateNSView(_ terminal: LocalProcessTerminalView, context: Context) {
