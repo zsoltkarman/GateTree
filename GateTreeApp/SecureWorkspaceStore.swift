@@ -425,7 +425,11 @@ final class SecureWorkspaceStore: ObservableObject {
 
     func showNotes() {
         guard storageMode == .encrypted else {
-            errorMessage = "Notes require an encrypted workspace. Encrypt the workspace before creating notes."
+            // Notes have no plaintext fallback. Take the user straight to the
+            // required encryption flow instead of leaving an invisible error
+            // message behind the sidebar button.
+            errorMessage = nil
+            isShowingEncryptionSetup = true
             return
         }
         selectedSSHConnection = nil
