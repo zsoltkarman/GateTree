@@ -1550,6 +1550,10 @@ final class SecureWorkspaceStore: ObservableObject {
     }
 
     func selectTreeItem(_ id: UUID) {
+        // A connection-tree selection means the user has moved away from the
+        // dedicated Notes workspace. Do not leave Notes covering the session
+        // area behind the selected connection.
+        isShowingNotes = false
         if NSEvent.modifierFlags.contains(.command) {
             if selectedTreeItemIDs.contains(id) {
                 selectedTreeItemIDs.remove(id)
@@ -1564,6 +1568,7 @@ final class SecureWorkspaceStore: ObservableObject {
     }
 
     func selectOnlyTreeItem(_ id: UUID) {
+        isShowingNotes = false
         selectedTreeItemIDs = [id]
         selectedTreeItemID = id
         UserDefaults.standard.set(id.uuidString, forKey: "GateTree.lastSelectedTreeItemID")

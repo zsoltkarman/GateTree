@@ -458,14 +458,14 @@ private struct GateTreeAboutView: View {
                 Text("• Double-click a URL or select it from Quick Access to open or focus its Google Chrome tab.")
                 Text("• Choose a bookmark icon when creating or editing a URL; the selected icon is saved with that bookmark.")
                 Text("• Right-click a URL and choose Add to Quick Access to pin it to the top bar.")
-                Text("• Drag Quick Access items left or right to set their saved order.")
+                Text("• Drag Quick Access items left or right to set their saved order. In a narrow window, use the horizontal scrollbar to reach every favorite.")
                 Text("• Use the search field to filter by name, address, or tag. Results are grouped by folder path, so repeated service names remain distinguishable; the × icon clears the search.")
                 Text("• Right-click a folder and choose New Folder to create a child folder. The destination folder stays expanded so the new item remains visible.")
                 Text("• Right-click an item and choose Move to Trash. Right-click Trash and choose Empty Trash… to permanently delete its contents.")
                 Text("• Notes are available from the sidebar above Applications and are stored only inside an encrypted workspace. Select Notes in a plaintext workspace to start encryption setup.")
                 Text("• Use + for a new note and the folder+ button for a one-level note folder. Right-click Root notes or a folder to create a note there; right-click a folder to rename or safely delete it. Deleting a folder moves its notes to Root notes.")
                 Text("• Right-click a note to open or delete it. Drag a note onto Root notes or another note folder to move it. The note editor preserves literal text such as ------ for commands and separators.")
-                Text("• Save writes the encrypted note and closes its editor; the note remains in the list.")
+                Text("• The note editor preserves literal text such as ------ and supports Undo/Redo with ⌘Z / ⇧⌘Z. An Unsaved changes indicator appears while editing; Close asks whether to save or discard changes. Save keeps the note open.")
                 Text("• KeePassXC credential references can be inherited by child SSH and RDP connections.")
                 Text("• When creating a KeePassXC credential, choose the .kdbx file and enter the entry path: its group path plus entry title. A copied full Group Path (for example /Operations/...) or a root-relative path both work.")
             }
@@ -1079,6 +1079,12 @@ private struct SidebarNotes: View {
 }
 
 private struct NotesWorkspaceView: View {
+    private enum NavigationTarget: Equatable {
+        case note(UUID)
+        case folder(UUID?)
+        case close
+    }
+
     @EnvironmentObject private var workspaceStore: SecureWorkspaceStore
     @Binding var searchText: String
     @State private var selectedID: UUID?
@@ -1090,15 +1096,26 @@ private struct NotesWorkspaceView: View {
     @State private var isRenamingFolder = false
     @State private var renamingFolderID: UUID?
     @State private var renamingFolderName = ""
+    @State private var isShowingUnsavedChangesConfirmation = false
+    @State private var pendingNavigation: NavigationTarget?
 
     private var selectedNote: WorkspaceNote? {
         workspaceStore.notes.first { $0.id == selectedID }
     }
 
     private var filteredNotes: [WorkspaceNote] {
+        notes(in: selectedFolderID)
+    }
+
+    private var hasUnsavedChanges: Bool {
+        guard let selectedNote else { return false }
+        return title != selectedNote.title || bodyText != selectedNote.body
+    }
+
+    private func notes(in folderID: UUID?) -> [WorkspaceNote] {
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
         return workspaceStore.notes
-            .filter { $0.folderID == selectedFolderID }
+            .filter { $0.folderID == folderID }
             .filter { query.isEmpty || ($0.title + " " + $0.body).localizedCaseInsensitiveContains(query) }
             .sorted { $0.updatedAt > $1.updatedAt }
     }
@@ -1164,7 +1181,7 @@ private struct NotesWorkspaceView: View {
                     LazyVStack(alignment: .leading, spacing: 1) {
                         ForEach(filteredNotes) { note in
                             Button {
-                                select(note)
+                                requestNavigation(.note(note.id))
                             } label: {
                                 Text(note.title.isEmpty ? "Untitled note" : note.title)
                                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -1178,7 +1195,7 @@ private struct NotesWorkspaceView: View {
                             .onDrag { noteItemProvider(note.id) }
                             .contextMenu {
                                 Button("Open") {
-                                    select(note)
+                                    requestNavigation(.note(note.id))
                                 }
                                 Divider()
                                 Button("Delete note", role: .destructive) {
@@ -1195,7 +1212,6 @@ private struct NotesWorkspaceView: View {
                     .padding(.vertical, 3)
                 }
                 .background(Color.white)
-                .onChange(of: selectedID) { _ in select(selectedNote) }
                 .onChange(of: searchText) { _ in
                     if !filteredNotes.contains(where: { $0.id == selectedID }) {
                         select(filteredNotes.first)
@@ -1214,9 +1230,16 @@ private struct NotesWorkspaceView: View {
                     HStack {
                         TextField("Note title", text: $title)
                             .font(.title3.weight(.semibold))
+                        if hasUnsavedChanges {
+                            Label("Unsaved changes", systemImage: "circle.fill")
+                                .font(.caption.weight(.medium))
+                                .foregroundStyle(.orange)
+                        }
                         Spacer()
                         Button("Save") { saveDraft() }
                             .buttonStyle(.borderedProminent)
+                        Button("Close") { requestNavigation(.close) }
+                            .buttonStyle(.bordered)
                         Button(role: .destructive) {
                             if let selectedID { workspaceStore.deleteNote(selectedID) }
                             select(workspaceStore.notes.last)
@@ -1253,6 +1276,20 @@ private struct NotesWorkspaceView: View {
         } message: {
             Text("Folder names are unique within Notes.")
         }
+        .alert("Unsaved changes", isPresented: $isShowingUnsavedChangesConfirmation) {
+            Button("Save") {
+                saveDraft(closeAfterSaving: false)
+                performPendingNavigation()
+            }
+            Button("Discard changes", role: .destructive) {
+                performPendingNavigation()
+            }
+            Button("Keep editing", role: .cancel) {
+                pendingNavigation = nil
+            }
+        } message: {
+            Text("This note has changes that are not saved yet.")
+        }
         .onAppear { select(filteredNotes.first) }
     }
 
@@ -1262,12 +1299,39 @@ private struct NotesWorkspaceView: View {
         bodyText = note?.body ?? ""
     }
 
-    private func saveDraft() {
+    private func saveDraft(closeAfterSaving: Bool = false) {
         guard let selectedNote else { return }
         workspaceStore.updateNote(selectedNote, title: title, body: bodyText)
-        // Saving is also the explicit "close note" action: the note remains
-        // in the encrypted list, but its editor no longer occupies the pane.
-        select(nil)
+        if closeAfterSaving {
+            select(nil)
+        }
+    }
+
+    private func requestNavigation(_ target: NavigationTarget) {
+        guard hasUnsavedChanges else {
+            performNavigation(target)
+            return
+        }
+        pendingNavigation = target
+        isShowingUnsavedChangesConfirmation = true
+    }
+
+    private func performPendingNavigation() {
+        guard let pendingNavigation else { return }
+        self.pendingNavigation = nil
+        performNavigation(pendingNavigation)
+    }
+
+    private func performNavigation(_ target: NavigationTarget) {
+        switch target {
+        case let .note(id):
+            select(workspaceStore.notes.first { $0.id == id })
+        case let .folder(id):
+            selectedFolderID = id
+            select(notes(in: id).first)
+        case .close:
+            select(nil)
+        }
     }
 
     private func addFolder() {
@@ -1283,7 +1347,7 @@ private struct NotesWorkspaceView: View {
 
     private func folderRow(title: String, icon: String, id: UUID?) -> some View {
         Button {
-            selectedFolderID = id
+            requestNavigation(.folder(id))
         } label: {
             HStack(spacing: 6) {
                 Image(systemName: icon)
@@ -1355,6 +1419,7 @@ private struct PlainTextNoteEditor: NSViewRepresentable {
         textView.isAutomaticDashSubstitutionEnabled = false
         textView.isAutomaticQuoteSubstitutionEnabled = false
         textView.isAutomaticTextReplacementEnabled = false
+        textView.allowsUndo = true
         textView.font = .monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
         textView.drawsBackground = false
         textView.isVerticallyResizable = true
@@ -1991,7 +2056,7 @@ private struct QuickAccessBar: View {
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             } else {
-                ScrollView(.horizontal, showsIndicators: false) {
+                ScrollView(.horizontal, showsIndicators: true) {
                     HStack(spacing: 4) {
                         ForEach(workspaceStore.quickAccessWebLinks) { webLink in
                             Button {
@@ -2013,6 +2078,8 @@ private struct QuickAccessBar: View {
                             .onDrop(of: [.text], delegate: QuickAccessDropDelegate(targetID: nil, store: workspaceStore))
                     }
                 }
+                .frame(minWidth: 0, maxWidth: .infinity)
+                .layoutPriority(1)
             }
         }
         .padding(.horizontal, 12)
