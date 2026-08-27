@@ -1078,8 +1078,11 @@ private struct NotesWorkspaceView: View {
     @EnvironmentObject private var workspaceStore: SecureWorkspaceStore
     @Binding var searchText: String
     @State private var selectedID: UUID?
+    @State private var selectedFolderID: UUID?
     @State private var title = ""
     @State private var bodyText = ""
+    @State private var newFolderName = ""
+    @State private var isAddingFolder = false
 
     private var selectedNote: WorkspaceNote? {
         workspaceStore.notes.first { $0.id == selectedID }
@@ -1088,6 +1091,7 @@ private struct NotesWorkspaceView: View {
     private var filteredNotes: [WorkspaceNote] {
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
         return workspaceStore.notes
+            .filter { $0.folderID == selectedFolderID }
             .filter { query.isEmpty || ($0.title + " " + $0.body).localizedCaseInsensitiveContains(query) }
             .sorted { $0.updatedAt > $1.updatedAt }
     }
@@ -1102,13 +1106,20 @@ private struct NotesWorkspaceView: View {
                     Spacer()
                     Button {
                         let note = WorkspaceNote(title: "Untitled note", body: "")
-                        workspaceStore.createNote(title: note.title, body: note.body)
+                        workspaceStore.createNote(title: note.title, body: note.body, folderID: selectedFolderID)
                         select(workspaceStore.notes.last)
                     } label: {
                         Image(systemName: "plus")
                     }
                     .buttonStyle(.borderless)
                     .help("New encrypted note")
+                    Button {
+                        isAddingFolder.toggle()
+                    } label: {
+                        Image(systemName: "folder.badge.plus")
+                    }
+                    .buttonStyle(.borderless)
+                    .help("New note folder")
                 }
                 .padding(.horizontal, 12)
                 .padding(.top, 12)
@@ -1117,6 +1128,39 @@ private struct NotesWorkspaceView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .padding(.horizontal, 12)
+
+                if isAddingFolder {
+                    HStack(spacing: 6) {
+                        TextField("Folder name", text: $newFolderName)
+                            .textFieldStyle(.roundedBorder)
+                            .onSubmit { addFolder() }
+                        Button("Add") { addFolder() }
+                            .disabled(newFolderName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    }
+                    .padding(.horizontal, 12)
+                }
+
+                VStack(alignment: .leading, spacing: 2) {
+                    folderRow(title: "Root notes", icon: "tray.full", id: nil)
+                    ForEach(workspaceStore.noteFolders) { folder in
+                        HStack(spacing: 2) {
+                            folderRow(title: folder.name, icon: "folder", id: folder.id)
+                            Button(role: .destructive) {
+                                workspaceStore.deleteNoteFolder(folder.id)
+                                if selectedFolderID == folder.id { selectedFolderID = nil }
+                            } label: {
+                                Image(systemName: "xmark")
+                                    .font(.system(size: 9, weight: .semibold))
+                            }
+                            .buttonStyle(.plain)
+                            .help("Delete folder and move its notes to Root notes")
+                            .padding(.trailing, 8)
+                        }
+                    }
+                }
+                .padding(.horizontal, 6)
+
+                Divider()
 
                 List(selection: $selectedID) {
                     ForEach(filteredNotes) { note in
@@ -1129,6 +1173,9 @@ private struct NotesWorkspaceView: View {
                     if !filteredNotes.contains(where: { $0.id == selectedID }) {
                         select(filteredNotes.first)
                     }
+                }
+                .onChange(of: selectedFolderID) { _ in
+                    select(filteredNotes.first)
                 }
             }
             .frame(minWidth: 220, idealWidth: 250, maxWidth: 300, maxHeight: .infinity)
@@ -1179,6 +1226,38 @@ private struct NotesWorkspaceView: View {
     private func saveDraft() {
         guard let selectedNote else { return }
         workspaceStore.updateNote(selectedNote, title: title, body: bodyText)
+    }
+
+    private func addFolder() {
+        let name = newFolderName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else { return }
+        workspaceStore.createNoteFolder(name: name)
+        if let folder = workspaceStore.noteFolders.last(where: { $0.name == name }) {
+            selectedFolderID = folder.id
+        }
+        newFolderName = ""
+        isAddingFolder = false
+    }
+
+    private func folderRow(title: String, icon: String, id: UUID?) -> some View {
+        Button {
+            selectedFolderID = id
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: icon)
+                Text(title)
+                Spacer()
+                Text("\(workspaceStore.notes.filter { $0.folderID == id }.count)")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+            .font(.system(size: 11))
+            .padding(.horizontal, 7)
+            .padding(.vertical, 4)
+            .background(selectedFolderID == id ? Color.accentColor.opacity(0.18) : .clear)
+            .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+        }
+        .buttonStyle(.plain)
     }
 }
 

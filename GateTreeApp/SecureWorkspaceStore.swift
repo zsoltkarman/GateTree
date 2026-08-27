@@ -22,6 +22,7 @@ final class SecureWorkspaceStore: ObservableObject {
     @Published private(set) var credentials: [Credential] = []
     @Published private(set) var quickAccessWebLinkIDs: [UUID] = []
     @Published private(set) var notes: [WorkspaceNote] = []
+    @Published private(set) var noteFolders: [WorkspaceNoteFolder] = []
     @Published private(set) var selectedSSHConnection: SSHConnection?
     @Published private(set) var openSSHConnections: [SSHConnection] = []
     @Published private(set) var selectedRDPConnection: SSHConnection?
@@ -143,6 +144,7 @@ final class SecureWorkspaceStore: ObservableObject {
                 credentials = loadedWorkspace.credentials
                 quickAccessWebLinkIDs = loadedWorkspace.quickAccessWebLinkIDs
                 notes = loadedWorkspace.notes
+                noteFolders = loadedWorkspace.noteFolders
                 storageMode = .plaintext
                 needsMasterPasswordSetup = false
                 isUnlocked = true
@@ -241,6 +243,7 @@ final class SecureWorkspaceStore: ObservableObject {
             credentials = loadedWorkspace.credentials
             quickAccessWebLinkIDs = loadedWorkspace.quickAccessWebLinkIDs
             notes = loadedWorkspace.notes
+            noteFolders = loadedWorkspace.noteFolders
             workspaceModificationDate = currentWorkspaceModificationDate()
         } catch {
             errorMessage = "The workspace changed outside GateTree but could not be reloaded."
@@ -268,6 +271,7 @@ final class SecureWorkspaceStore: ObservableObject {
                     self.credentials = []
                     self.quickAccessWebLinkIDs = []
                     self.notes = []
+                    self.noteFolders = []
                     self.masterPassword = masterPassword
                     self.storageMode = .encrypted
                     self.needsMasterPasswordSetup = false
@@ -299,6 +303,7 @@ final class SecureWorkspaceStore: ObservableObject {
                     self.credentials = loadedWorkspace.credentials
                     self.quickAccessWebLinkIDs = loadedWorkspace.quickAccessWebLinkIDs
                     self.notes = loadedWorkspace.notes
+                    self.noteFolders = loadedWorkspace.noteFolders
                     self.masterPassword = masterPassword
                     self.storageMode = .encrypted
                     self.isUnlocked = true
@@ -438,9 +443,33 @@ final class SecureWorkspaceStore: ObservableObject {
         isShowingNotes = true
     }
 
-    func createNote(title: String, body: String) {
+    func createNote(title: String, body: String, folderID: UUID? = nil) {
         guard storageMode == .encrypted else { return }
-        notes.append(WorkspaceNote(title: title, body: body))
+        notes.append(WorkspaceNote(title: title, body: body, folderID: folderID))
+        synchronizeWorkspace()
+        save()
+    }
+
+    func createNoteFolder(name: String) {
+        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard storageMode == .encrypted, !trimmedName.isEmpty else { return }
+        guard !noteFolders.contains(where: { $0.name.localizedCaseInsensitiveCompare(trimmedName) == .orderedSame }) else {
+            errorMessage = "A note folder with this name already exists."
+            return
+        }
+        noteFolders.append(WorkspaceNoteFolder(name: trimmedName))
+        synchronizeWorkspace()
+        save()
+    }
+
+    func deleteNoteFolder(_ id: UUID) {
+        guard storageMode == .encrypted else { return }
+        noteFolders.removeAll { $0.id == id }
+        // Keep notes recoverable: removing a folder moves its direct notes to
+        // the root rather than deleting their encrypted content.
+        for index in notes.indices where notes[index].folderID == id {
+            notes[index].folderID = nil
+        }
         synchronizeWorkspace()
         save()
     }
@@ -1876,7 +1905,8 @@ final class SecureWorkspaceStore: ObservableObject {
             rootTerminalCommands: rootTerminalCommands,
             credentials: credentials,
             quickAccessWebLinkIDs: quickAccessWebLinkIDs,
-            notes: notes
+            notes: notes,
+            noteFolders: noteFolders
         )
     }
 
@@ -2473,12 +2503,26 @@ struct WorkspaceNote: Codable, Identifiable, Hashable, Sendable {
     var title: String
     var body: String
     var updatedAt: Date
+    var folderID: UUID?
 
-    init(id: UUID = UUID(), title: String, body: String, updatedAt: Date = .now) {
+    init(id: UUID = UUID(), title: String, body: String, updatedAt: Date = .now, folderID: UUID? = nil) {
         self.id = id
         self.title = title
         self.body = body
         self.updatedAt = updatedAt
+        self.folderID = folderID
+    }
+}
+
+/// Notes support one direct folder level. A folder deliberately has no
+/// children, keeping the encrypted notes workspace compact and predictable.
+struct WorkspaceNoteFolder: Codable, Identifiable, Hashable, Sendable {
+    let id: UUID
+    var name: String
+
+    init(id: UUID = UUID(), name: String) {
+        self.id = id
+        self.name = name
     }
 }
 
@@ -2590,8 +2634,9 @@ private struct Workspace: Codable, Sendable {
     let credentials: [Credential]
     let quickAccessWebLinkIDs: [UUID]
     let notes: [WorkspaceNote]
+    let noteFolders: [WorkspaceNoteFolder]
 
-    init(formatVersion: Int = 1, createdAt: Date = .now, folders: [WorkspaceFolder] = [], rootConnections: [SSHConnection] = [], rootWebLinks: [WebLink] = [], rootTerminalCommands: [TerminalCommand] = [], credentials: [Credential] = [], quickAccessWebLinkIDs: [UUID] = [], notes: [WorkspaceNote] = []) {
+    init(formatVersion: Int = 1, createdAt: Date = .now, folders: [WorkspaceFolder] = [], rootConnections: [SSHConnection] = [], rootWebLinks: [WebLink] = [], rootTerminalCommands: [TerminalCommand] = [], credentials: [Credential] = [], quickAccessWebLinkIDs: [UUID] = [], notes: [WorkspaceNote] = [], noteFolders: [WorkspaceNoteFolder] = []) {
         self.formatVersion = formatVersion
         self.createdAt = createdAt
         self.folders = folders
@@ -2601,6 +2646,7 @@ private struct Workspace: Codable, Sendable {
         self.credentials = credentials
         self.quickAccessWebLinkIDs = quickAccessWebLinkIDs
         self.notes = notes
+        self.noteFolders = noteFolders
     }
 
     init(from decoder: Decoder) throws {
@@ -2614,6 +2660,7 @@ private struct Workspace: Codable, Sendable {
         credentials = try values.decodeIfPresent([Credential].self, forKey: .credentials) ?? []
         quickAccessWebLinkIDs = try values.decodeIfPresent([UUID].self, forKey: .quickAccessWebLinkIDs) ?? []
         notes = try values.decodeIfPresent([WorkspaceNote].self, forKey: .notes) ?? []
+        noteFolders = try values.decodeIfPresent([WorkspaceNoteFolder].self, forKey: .noteFolders) ?? []
     }
 }
 
