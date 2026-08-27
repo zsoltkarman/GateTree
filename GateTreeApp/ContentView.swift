@@ -9,10 +9,6 @@ private func treeItemProvider(_ payload: String) -> NSItemProvider {
     NSItemProvider(object: payload as NSString)
 }
 
-private extension UTType {
-    static let gateTreeNoteID = UTType(exportedAs: "com.gatetree.note-id")
-}
-
 private extension View {
     /// Gives a double-click priority over a single-click selection. Keeping
     /// these gestures exclusive prevents List rows from consuming the second
@@ -1263,19 +1259,15 @@ private struct NotesWorkspaceView: View {
             .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
         }
         .buttonStyle(.plain)
+        .contentShape(Rectangle())
         .onDrop(
-            of: [.gateTreeNoteID],
+            of: [.text],
             delegate: NoteFolderDropDelegate(folderID: id, workspaceStore: workspaceStore)
         )
     }
 
     private func noteItemProvider(_ id: UUID) -> NSItemProvider {
-        let provider = NSItemProvider()
-        provider.registerDataRepresentation(forTypeIdentifier: UTType.gateTreeNoteID.identifier, visibility: .all) { completion in
-            completion(Data(id.uuidString.utf8), nil)
-            return nil
-        }
-        return provider
+        NSItemProvider(object: "GateTreeNote:\(id.uuidString)" as NSString)
     }
 }
 
@@ -1284,15 +1276,15 @@ private struct NoteFolderDropDelegate: DropDelegate {
     let workspaceStore: SecureWorkspaceStore
 
     func validateDrop(info: DropInfo) -> Bool {
-        info.hasItemsConforming(to: [.gateTreeNoteID])
+        info.hasItemsConforming(to: [.text])
     }
 
     func performDrop(info: DropInfo) -> Bool {
-        guard let provider = info.itemProviders(for: [.gateTreeNoteID]).first else { return false }
-        provider.loadDataRepresentation(forTypeIdentifier: UTType.gateTreeNoteID.identifier) { data, _ in
-            guard let data,
-                  let text = String(data: data, encoding: .utf8),
-                  let noteID = UUID(uuidString: text) else { return }
+        guard let provider = info.itemProviders(for: [.text]).first else { return false }
+        provider.loadObject(ofClass: NSString.self) { value, _ in
+            guard let text = value as? String,
+                  text.hasPrefix("GateTreeNote:"),
+                  let noteID = UUID(uuidString: String(text.dropFirst("GateTreeNote:".count))) else { return }
             Task { @MainActor in
                 workspaceStore.moveNote(noteID, to: folderID)
             }
