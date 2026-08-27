@@ -99,8 +99,13 @@ struct ContentView: View {
 
                                 Divider()
 
-                                FolderList(searchText: searchText)
-                                    .frame(height: sidebarTreeHeight, alignment: .top)
+                                SidebarConnections(
+                                    searchText: searchText,
+                                    treeHeight: sidebarTreeHeight
+                                )
+
+                                Divider()
+                                SidebarNotes()
 
                                 Divider()
                                 SidebarApplications()
@@ -130,6 +135,8 @@ struct ContentView: View {
 
                             if workspaceStore.isShowingCredentials {
                                 CredentialsManagerView()
+                            } else if workspaceStore.isShowingNotes {
+                                NotesWorkspaceView()
                             } else if workspaceStore.isShowingSSHUsernamePrompt || workspaceStore.isShowingRDPUsernamePrompt || workspaceStore.isShowingCodexResult || !workspaceStore.openSSHConnections.isEmpty || !workspaceStore.openRDPConnections.isEmpty || !workspaceStore.openExternalWebLinks.isEmpty {
                                 ZStack(alignment: .trailing) {
                                     ZStack {
@@ -997,6 +1004,158 @@ private struct ChromeLinkPane: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color(nsColor: .windowBackgroundColor))
+    }
+}
+
+private struct SidebarConnections: View {
+    let searchText: String
+    let treeHeight: CGFloat
+    @State private var isExpanded = true
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Button {
+                isExpanded.toggle()
+            } label: {
+                Label("Connections", systemImage: isExpanded ? "chevron.down" : "chevron.right")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.plain)
+            .padding(.horizontal, 8)
+            .padding(.top, 6)
+
+            if isExpanded {
+                FolderList(searchText: searchText)
+                    .frame(height: treeHeight - 30, alignment: .top)
+            }
+        }
+    }
+}
+
+private struct SidebarNotes: View {
+    @EnvironmentObject private var workspaceStore: SecureWorkspaceStore
+
+    var body: some View {
+        Button {
+            workspaceStore.showNotes()
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: workspaceStore.storageMode == .encrypted ? "note.text" : "lock.fill")
+                    .foregroundStyle(workspaceStore.storageMode == .encrypted ? .purple : .secondary)
+                Text("Notes")
+                if !workspaceStore.notes.isEmpty {
+                    Text("\(workspaceStore.notes.count)")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+            }
+            .font(.system(size: 12, weight: .medium))
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
+            .background(workspaceStore.isShowingNotes ? Color.accentColor.opacity(0.22) : .clear)
+            .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .help(workspaceStore.storageMode == .encrypted ? "Encrypted workspace notes" : "Notes require an encrypted workspace")
+        .padding(.horizontal, 2)
+        .padding(.vertical, 2)
+    }
+}
+
+private struct NotesWorkspaceView: View {
+    @EnvironmentObject private var workspaceStore: SecureWorkspaceStore
+    @State private var selectedID: UUID?
+    @State private var title = ""
+    @State private var bodyText = ""
+
+    private var selectedNote: WorkspaceNote? {
+        workspaceStore.notes.first { $0.id == selectedID }
+    }
+
+    var body: some View {
+        HStack(spacing: 0) {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Label("Notes", systemImage: "lock.fill")
+                        .font(.headline)
+                        .foregroundStyle(.purple)
+                    Spacer()
+                    Button {
+                        let note = WorkspaceNote(title: "Untitled note", body: "")
+                        workspaceStore.createNote(title: note.title, body: note.body)
+                        select(workspaceStore.notes.last)
+                    } label: {
+                        Image(systemName: "plus")
+                    }
+                    .buttonStyle(.borderless)
+                    .help("New encrypted note")
+                }
+                .padding(.horizontal, 12)
+                .padding(.top, 12)
+
+                Text("Stored only in the encrypted workspace.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 12)
+
+                List(selection: $selectedID) {
+                    ForEach(workspaceStore.notes.sorted { $0.updatedAt > $1.updatedAt }) { note in
+                        Text(note.title.isEmpty ? "Untitled note" : note.title)
+                            .tag(note.id)
+                    }
+                }
+                .onChange(of: selectedID) { _ in select(selectedNote) }
+            }
+            .frame(minWidth: 220, idealWidth: 250, maxWidth: 300, maxHeight: .infinity)
+
+            Divider()
+
+            VStack(alignment: .leading, spacing: 10) {
+                if selectedNote != nil {
+                    HStack {
+                        TextField("Note title", text: $title)
+                            .font(.title3.weight(.semibold))
+                        Spacer()
+                        Button("Save") { saveDraft() }
+                            .buttonStyle(.borderedProminent)
+                        Button(role: .destructive) {
+                            if let selectedID { workspaceStore.deleteNote(selectedID) }
+                            select(workspaceStore.notes.last)
+                        } label: {
+                            Image(systemName: "trash")
+                        }
+                        .buttonStyle(.bordered)
+                        .help("Delete note")
+                    }
+                    TextEditor(text: $bodyText)
+                        .font(.system(.body, design: .monospaced))
+                        .scrollContentBackground(.hidden)
+                        .padding(8)
+                        .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+                } else {
+                    ContentUnavailableView(
+                        "No note selected",
+                        systemImage: "note.text",
+                        description: Text("Create an encrypted note with the plus button."))
+                }
+            }
+            .padding(20)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .onAppear { select(workspaceStore.notes.sorted { $0.updatedAt > $1.updatedAt }.first) }
+    }
+
+    private func select(_ note: WorkspaceNote?) {
+        selectedID = note?.id
+        title = note?.title ?? ""
+        bodyText = note?.body ?? ""
+    }
+
+    private func saveDraft() {
+        guard let selectedNote else { return }
+        workspaceStore.updateNote(selectedNote, title: title, body: bodyText)
     }
 }
 

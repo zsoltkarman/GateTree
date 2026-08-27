@@ -21,6 +21,7 @@ final class SecureWorkspaceStore: ObservableObject {
     @Published private(set) var rootTerminalCommands: [TerminalCommand] = []
     @Published private(set) var credentials: [Credential] = []
     @Published private(set) var quickAccessWebLinkIDs: [UUID] = []
+    @Published private(set) var notes: [WorkspaceNote] = []
     @Published private(set) var selectedSSHConnection: SSHConnection?
     @Published private(set) var openSSHConnections: [SSHConnection] = []
     @Published private(set) var selectedRDPConnection: SSHConnection?
@@ -32,6 +33,7 @@ final class SecureWorkspaceStore: ObservableObject {
     @Published private(set) var openExternalWebLinks: [WebLink] = []
     @Published private(set) var selectedSSHPassword: String?
     @Published private(set) var isShowingCredentials = false
+    @Published private(set) var isShowingNotes = false
     @Published private(set) var selectedTreeItemID: UUID?
     @Published private(set) var selectedTreeItemIDs: Set<UUID> = []
     @Published private(set) var expandedFolderIDs: Set<UUID> = []
@@ -140,6 +142,7 @@ final class SecureWorkspaceStore: ObservableObject {
                 rootTerminalCommands = loadedWorkspace.rootTerminalCommands
                 credentials = loadedWorkspace.credentials
                 quickAccessWebLinkIDs = loadedWorkspace.quickAccessWebLinkIDs
+                notes = loadedWorkspace.notes
                 storageMode = .plaintext
                 needsMasterPasswordSetup = false
                 isUnlocked = true
@@ -237,6 +240,7 @@ final class SecureWorkspaceStore: ObservableObject {
             rootTerminalCommands = loadedWorkspace.rootTerminalCommands
             credentials = loadedWorkspace.credentials
             quickAccessWebLinkIDs = loadedWorkspace.quickAccessWebLinkIDs
+            notes = loadedWorkspace.notes
             workspaceModificationDate = currentWorkspaceModificationDate()
         } catch {
             errorMessage = "The workspace changed outside GateTree but could not be reloaded."
@@ -263,6 +267,7 @@ final class SecureWorkspaceStore: ObservableObject {
                     self.rootTerminalCommands = []
                     self.credentials = []
                     self.quickAccessWebLinkIDs = []
+                    self.notes = []
                     self.masterPassword = masterPassword
                     self.storageMode = .encrypted
                     self.needsMasterPasswordSetup = false
@@ -293,6 +298,7 @@ final class SecureWorkspaceStore: ObservableObject {
                     self.rootTerminalCommands = loadedWorkspace.rootTerminalCommands
                     self.credentials = loadedWorkspace.credentials
                     self.quickAccessWebLinkIDs = loadedWorkspace.quickAccessWebLinkIDs
+                    self.notes = loadedWorkspace.notes
                     self.masterPassword = masterPassword
                     self.storageMode = .encrypted
                     self.isUnlocked = true
@@ -413,7 +419,43 @@ final class SecureWorkspaceStore: ObservableObject {
     func showCredentials() {
         selectedSSHConnection = nil
         activeExternalWebLink = nil
+        isShowingNotes = false
         isShowingCredentials = true
+    }
+
+    func showNotes() {
+        guard storageMode == .encrypted else {
+            errorMessage = "Notes require an encrypted workspace. Encrypt the workspace before creating notes."
+            return
+        }
+        selectedSSHConnection = nil
+        activeExternalWebLink = nil
+        isShowingCredentials = false
+        isShowingNotes = true
+    }
+
+    func createNote(title: String, body: String) {
+        guard storageMode == .encrypted else { return }
+        notes.append(WorkspaceNote(title: title, body: body))
+        synchronizeWorkspace()
+        save()
+    }
+
+    func updateNote(_ note: WorkspaceNote, title: String, body: String) {
+        guard storageMode == .encrypted,
+              let index = notes.firstIndex(where: { $0.id == note.id }) else { return }
+        notes[index].title = title
+        notes[index].body = body
+        notes[index].updatedAt = .now
+        synchronizeWorkspace()
+        save()
+    }
+
+    func deleteNote(_ id: UUID) {
+        guard storageMode == .encrypted else { return }
+        notes.removeAll { $0.id == id }
+        synchronizeWorkspace()
+        save()
     }
 
     func showCredentialCreation() {
@@ -554,6 +596,10 @@ final class SecureWorkspaceStore: ObservableObject {
 
     func decryptWorkspace() {
         guard storageMode == .encrypted else { return }
+        guard notes.isEmpty else {
+            errorMessage = "Delete all encrypted notes before converting this workspace to plaintext."
+            return
+        }
         isProcessing = true
         let currentWorkspace = workspace
 
@@ -1227,6 +1273,7 @@ final class SecureWorkspaceStore: ObservableObject {
         activeSessionProtocol = .rdp
         selectedWebLink = nil
         activeExternalWebLink = nil
+        isShowingNotes = false
     }
 
     func rdpPassword(for connection: SSHConnection) -> String? {
@@ -1241,6 +1288,7 @@ final class SecureWorkspaceStore: ObservableObject {
         activeSessionProtocol = .ssh
         selectedWebLink = nil
         activeExternalWebLink = nil
+        isShowingNotes = false
     }
 
     func password(for connection: SSHConnection) -> String? {
@@ -1258,6 +1306,7 @@ final class SecureWorkspaceStore: ObservableObject {
         selectedSSHPassword = password
         activeSessionID = connection.id
         activeSessionProtocol = .ssh
+        isShowingNotes = false
     }
 
     private func isValid(localTunnel: SSHLocalTunnel?) -> Bool {
@@ -1283,6 +1332,7 @@ final class SecureWorkspaceStore: ObservableObject {
         activeSessionProtocol = .rdp
         selectedWebLink = nil
         activeExternalWebLink = nil
+        isShowingNotes = false
     }
 
     func selectWebLink(_ webLink: WebLink) {
@@ -1292,6 +1342,7 @@ final class SecureWorkspaceStore: ObservableObject {
         selectedSSHConnection = nil
         selectedSSHPassword = nil
         isShowingCredentials = false
+        isShowingNotes = false
         selectedWebLink = nil
         activeSessionID = nil
         activeSessionProtocol = nil
@@ -1435,6 +1486,7 @@ final class SecureWorkspaceStore: ObservableObject {
         selectedSSHPassword = nil
         activeSessionID = nil
         activeSessionProtocol = nil
+        isShowingNotes = false
         activateChromeTab(for: webLink)
     }
 
@@ -1819,7 +1871,8 @@ final class SecureWorkspaceStore: ObservableObject {
             rootWebLinks: rootWebLinks,
             rootTerminalCommands: rootTerminalCommands,
             credentials: credentials,
-            quickAccessWebLinkIDs: quickAccessWebLinkIDs
+            quickAccessWebLinkIDs: quickAccessWebLinkIDs,
+            notes: notes
         )
     }
 
@@ -2409,6 +2462,22 @@ struct TerminalCommand: Codable, Identifiable, Hashable, Sendable {
     }
 }
 
+/// Stored inside the encrypted workspace payload only. There is intentionally
+/// no separate note file or autosave location on disk.
+struct WorkspaceNote: Codable, Identifiable, Hashable, Sendable {
+    let id: UUID
+    var title: String
+    var body: String
+    var updatedAt: Date
+
+    init(id: UUID = UUID(), title: String, body: String, updatedAt: Date = .now) {
+        self.id = id
+        self.title = title
+        self.body = body
+        self.updatedAt = updatedAt
+    }
+}
+
 enum ConnectionProtocol: String, Codable, Hashable, Sendable {
     case ssh
     case rdp
@@ -2516,8 +2585,9 @@ private struct Workspace: Codable, Sendable {
     let rootTerminalCommands: [TerminalCommand]
     let credentials: [Credential]
     let quickAccessWebLinkIDs: [UUID]
+    let notes: [WorkspaceNote]
 
-    init(formatVersion: Int = 1, createdAt: Date = .now, folders: [WorkspaceFolder] = [], rootConnections: [SSHConnection] = [], rootWebLinks: [WebLink] = [], rootTerminalCommands: [TerminalCommand] = [], credentials: [Credential] = [], quickAccessWebLinkIDs: [UUID] = []) {
+    init(formatVersion: Int = 1, createdAt: Date = .now, folders: [WorkspaceFolder] = [], rootConnections: [SSHConnection] = [], rootWebLinks: [WebLink] = [], rootTerminalCommands: [TerminalCommand] = [], credentials: [Credential] = [], quickAccessWebLinkIDs: [UUID] = [], notes: [WorkspaceNote] = []) {
         self.formatVersion = formatVersion
         self.createdAt = createdAt
         self.folders = folders
@@ -2526,6 +2596,7 @@ private struct Workspace: Codable, Sendable {
         self.rootTerminalCommands = rootTerminalCommands
         self.credentials = credentials
         self.quickAccessWebLinkIDs = quickAccessWebLinkIDs
+        self.notes = notes
     }
 
     init(from decoder: Decoder) throws {
@@ -2538,6 +2609,7 @@ private struct Workspace: Codable, Sendable {
         rootTerminalCommands = try values.decodeIfPresent([TerminalCommand].self, forKey: .rootTerminalCommands) ?? []
         credentials = try values.decodeIfPresent([Credential].self, forKey: .credentials) ?? []
         quickAccessWebLinkIDs = try values.decodeIfPresent([UUID].self, forKey: .quickAccessWebLinkIDs) ?? []
+        notes = try values.decodeIfPresent([WorkspaceNote].self, forKey: .notes) ?? []
     }
 }
 
