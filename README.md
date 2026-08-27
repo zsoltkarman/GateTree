@@ -20,7 +20,7 @@ spreading hosts, passwords and monitoring URLs across separate tools.
   results are grouped by their folder path, which keeps repeated names such as
   repeated service names readable across regions and environments.
 - **Embedded SSH sessions** using the system OpenSSH client and a native
-  terminal view, with several open connections represented as tabs.
+  terminal view, with multiple connections kept open at once.
 - **Embedded RDP sessions** powered by FreeRDP. RDP opens in its own GateTree
   tab alongside SSH sessions — no Terminal or X11 client is launched. Mouse
   input and standard Unicode keyboard input are supported.
@@ -37,6 +37,12 @@ spreading hosts, passwords and monitoring URLs across separate tools.
 - **Web bookmarks and Quick Access** for operational tools. Bookmarks can open in Chrome;
 GateTree can keep track of the corresponding Chrome tab and bring it to the
   foreground. Each bookmark stores its own selected icon.
+- **Open panes rail** on the right side of the workspace. It stays compact
+  until opened, then overlays the current SSH/RDP session instead of resizing
+  it. Open panes are grouped and colour-coded as SSH, RDP, Thanos, Grafana,
+  Confluence, Jira, SCM, Dashboards or Web. The list has a live search across
+  connection names, hosts, bookmark names, URLs and tags; every web pane has
+  one primary category, so it never appears twice.
 - **Incident triage** that passes supplied alert context to a locally installed
   Codex CLI in read-only mode and displays the result in an app tab.
 - **Workspace protection** with plaintext or encrypted workspace modes,

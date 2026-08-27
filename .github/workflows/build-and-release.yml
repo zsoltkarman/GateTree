@@ -132,7 +132,7 @@ jobs:
         run: |
           VERSION="${{ steps.version.outputs.value }}"
           if ! gh release view "$VERSION" >/dev/null 2>&1; then
-            gh release create "$VERSION" --title "GateTree $VERSION" --generate-notes
+            gh release create "$VERSION" --title "GateTree $VERSION" --notes-file RELEASE_NOTES.md
           fi
           gh release upload "$VERSION" ".dist/GateTree-$VERSION.dmg" .dist/appcast.xml --clobber
 
