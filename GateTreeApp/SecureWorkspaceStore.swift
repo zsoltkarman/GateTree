@@ -491,6 +491,16 @@ final class SecureWorkspaceStore: ObservableObject {
         save()
     }
 
+    func moveNote(_ id: UUID, to folderID: UUID?) {
+        guard storageMode == .encrypted,
+              let index = notes.firstIndex(where: { $0.id == id }) else { return }
+        guard notes[index].folderID != folderID else { return }
+        notes[index].folderID = folderID
+        notes[index].updatedAt = .now
+        synchronizeWorkspace()
+        save()
+    }
+
     func showCredentialCreation() {
         guard !isProcessing else { return }
         isShowingCredentialCreation = true
