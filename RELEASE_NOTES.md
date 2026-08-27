@@ -1,10 +1,7 @@
-# GateTree 0.4.1
+# GateTree 0.4.2
 
-## Notes context menus
+## Notes layout polish
 
-- Right-click a note to open or delete it.
-- Right-click a note folder to create a note in that folder, rename it, or
-  safely delete it.
-- Right-click **Root notes** to create a root-level note.
-- Deleting a folder continues to preserve its encrypted notes by moving them
-  back to Root notes.
+- The Notes list now uses a white background, matching the rest of the
+  workspace and making the unused part of the list visually clean.
+- The Notes list is narrower, leaving substantially more room for note text.

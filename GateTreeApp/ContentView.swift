@@ -1194,6 +1194,7 @@ private struct NotesWorkspaceView: View {
                     .padding(.horizontal, 6)
                     .padding(.vertical, 3)
                 }
+                .background(Color.white)
                 .onChange(of: selectedID) { _ in select(selectedNote) }
                 .onChange(of: searchText) { _ in
                     if !filteredNotes.contains(where: { $0.id == selectedID }) {
@@ -1204,7 +1205,7 @@ private struct NotesWorkspaceView: View {
                     select(filteredNotes.first)
                 }
             }
-            .frame(minWidth: 220, idealWidth: 250, maxWidth: 300, maxHeight: .infinity)
+            .frame(minWidth: 180, idealWidth: 210, maxWidth: 240, maxHeight: .infinity)
 
             Divider()
 
