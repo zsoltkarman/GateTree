@@ -105,7 +105,7 @@ struct ContentView: View {
                                 )
 
                                 Divider()
-                                SidebarNotes()
+                                SidebarNotes(searchText: searchText)
 
                                 Divider()
                                 SidebarApplications()
@@ -136,7 +136,7 @@ struct ContentView: View {
                             if workspaceStore.isShowingCredentials {
                                 CredentialsManagerView()
                             } else if workspaceStore.isShowingNotes {
-                                NotesWorkspaceView()
+                                NotesWorkspaceView(searchText: $searchText)
                             } else if workspaceStore.isShowingSSHUsernamePrompt || workspaceStore.isShowingRDPUsernamePrompt || workspaceStore.isShowingCodexResult || !workspaceStore.openSSHConnections.isEmpty || !workspaceStore.openRDPConnections.isEmpty || !workspaceStore.openExternalWebLinks.isEmpty {
                                 ZStack(alignment: .trailing) {
                                     ZStack {
@@ -1036,6 +1036,15 @@ private struct SidebarConnections: View {
 
 private struct SidebarNotes: View {
     @EnvironmentObject private var workspaceStore: SecureWorkspaceStore
+    let searchText: String
+
+    private var matchingNotes: [WorkspaceNote] {
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return workspaceStore.notes }
+        return workspaceStore.notes.filter {
+            ($0.title + " " + $0.body).localizedCaseInsensitiveContains(query)
+        }
+    }
 
     var body: some View {
         Button {
@@ -1046,7 +1055,7 @@ private struct SidebarNotes: View {
                     .foregroundStyle(workspaceStore.storageMode == .encrypted ? .purple : .secondary)
                 Text("Notes")
                 if !workspaceStore.notes.isEmpty {
-                    Text("\(workspaceStore.notes.count)")
+                    Text("\(searchText.isEmpty ? workspaceStore.notes.count : matchingNotes.count)")
                         .font(.system(size: 10, weight: .semibold))
                         .foregroundStyle(.secondary)
                 }
@@ -1067,12 +1076,20 @@ private struct SidebarNotes: View {
 
 private struct NotesWorkspaceView: View {
     @EnvironmentObject private var workspaceStore: SecureWorkspaceStore
+    @Binding var searchText: String
     @State private var selectedID: UUID?
     @State private var title = ""
     @State private var bodyText = ""
 
     private var selectedNote: WorkspaceNote? {
         workspaceStore.notes.first { $0.id == selectedID }
+    }
+
+    private var filteredNotes: [WorkspaceNote] {
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        return workspaceStore.notes
+            .filter { query.isEmpty || ($0.title + " " + $0.body).localizedCaseInsensitiveContains(query) }
+            .sorted { $0.updatedAt > $1.updatedAt }
     }
 
     var body: some View {
@@ -1102,12 +1119,17 @@ private struct NotesWorkspaceView: View {
                     .padding(.horizontal, 12)
 
                 List(selection: $selectedID) {
-                    ForEach(workspaceStore.notes.sorted { $0.updatedAt > $1.updatedAt }) { note in
+                    ForEach(filteredNotes) { note in
                         Text(note.title.isEmpty ? "Untitled note" : note.title)
                             .tag(note.id)
                     }
                 }
                 .onChange(of: selectedID) { _ in select(selectedNote) }
+                .onChange(of: searchText) { _ in
+                    if !filteredNotes.contains(where: { $0.id == selectedID }) {
+                        select(filteredNotes.first)
+                    }
+                }
             }
             .frame(minWidth: 220, idealWidth: 250, maxWidth: 300, maxHeight: .infinity)
 
@@ -1145,7 +1167,7 @@ private struct NotesWorkspaceView: View {
             .padding(20)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .onAppear { select(workspaceStore.notes.sorted { $0.updatedAt > $1.updatedAt }.first) }
+        .onAppear { select(filteredNotes.first) }
     }
 
     private func select(_ note: WorkspaceNote?) {
