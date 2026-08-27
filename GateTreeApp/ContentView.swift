@@ -477,6 +477,7 @@ private struct GateTreeAboutView: View {
 private struct PaneRail: View {
     @EnvironmentObject private var workspaceStore: SecureWorkspaceStore
     @Binding var isExpanded: Bool
+    @State private var searchText = ""
 
     private enum PaneCategory: String, CaseIterable, Identifiable {
         case ssh, rdp, thanos, grafana, confluence, jira, scm, dashboards, web
@@ -532,10 +533,35 @@ private struct PaneRail: View {
 
     private func count(for category: PaneCategory) -> Int {
         switch category {
-        case .ssh: return workspaceStore.openSSHConnections.count
-        case .rdp: return workspaceStore.openRDPConnections.count
+        case .ssh: return sshConnections.count
+        case .rdp: return rdpConnections.count
         default: return webLinks(for: category).count
         }
+    }
+
+    private var normalizedSearch: String {
+        searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+
+    private func matchesSearch(_ values: [String]) -> Bool {
+        normalizedSearch.isEmpty || values.joined(separator: " ").lowercased().contains(normalizedSearch)
+    }
+
+    private var sshConnections: [SSHConnection] {
+        workspaceStore.openSSHConnections.filter {
+            matchesSearch([$0.name, $0.host] + $0.tags)
+        }
+    }
+
+    private var rdpConnections: [SSHConnection] {
+        workspaceStore.openRDPConnections.filter {
+            matchesSearch([$0.name, $0.host] + $0.tags)
+        }
+    }
+
+    private var hasMatchingTools: Bool {
+        (workspaceStore.isCodexRunning || !workspaceStore.codexResult.isEmpty)
+            && matchesSearch(["Incident triage", "Tools"])
     }
 
     private func webLinks(for category: PaneCategory) -> [WebLink] {
@@ -543,6 +569,7 @@ private struct PaneRail: View {
             let searchable = ([webLink.name, webLink.url] + webLink.tags)
                 .joined(separator: " ")
                 .lowercased()
+            guard normalizedSearch.isEmpty || searchable.contains(normalizedSearch) else { return false }
             switch category {
             case .thanos: return searchable.contains("thanos")
             case .grafana: return searchable.contains("grafana")
@@ -667,12 +694,44 @@ private struct PaneRail: View {
             .padding(.horizontal, 12)
             .padding(.vertical, 11)
 
+            HStack(spacing: 6) {
+                Image(systemName: "magnifyingglass")
+                    .foregroundStyle(.secondary)
+                TextField("Search open panes", text: $searchText)
+                    .textFieldStyle(.plain)
+                if !searchText.isEmpty {
+                    Button {
+                        searchText = ""
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Clear pane search")
+                }
+            }
+            .font(.system(size: 12))
+            .padding(.horizontal, 10)
+            .padding(.vertical, 7)
+            .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+            .padding(.horizontal, 10)
+            .padding(.bottom, 8)
+
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
+                    if visibleCategories.isEmpty && !hasMatchingTools {
+                        ContentUnavailableView(
+                            "No matching open panes",
+                            systemImage: "magnifyingglass",
+                            description: Text("Try a connection, service, URL, or tag."))
+                            .frame(maxWidth: .infinity)
+                            .padding(.top, 28)
+                    }
+
                     ForEach(visibleCategories) { category in
                         paneSection(category) {
                             if category == .ssh {
-                                ForEach(workspaceStore.openSSHConnections) { connection in
+                                ForEach(sshConnections) { connection in
                                 paneRow(
                                     title: connection.name,
                                     icon: category.icon,
@@ -686,7 +745,7 @@ private struct PaneRail: View {
                                 )
                                 }
                             } else if category == .rdp {
-                                ForEach(workspaceStore.openRDPConnections) { connection in
+                                ForEach(rdpConnections) { connection in
                                 paneRow(
                                     title: connection.name,
                                     icon: category.icon,
@@ -717,7 +776,7 @@ private struct PaneRail: View {
                         }
                     }
 
-                    if workspaceStore.isCodexRunning || !workspaceStore.codexResult.isEmpty {
+                    if hasMatchingTools {
                         VStack(alignment: .leading, spacing: 5) {
                             Label("Tools  1", systemImage: "sparkles")
                                 .font(.system(size: 10, weight: .semibold))
