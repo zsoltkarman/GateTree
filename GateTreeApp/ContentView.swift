@@ -940,6 +940,7 @@ private struct FolderList: View {
                         }
                     }
                     .onDrag { treeItemProvider("ssh:\(connection.id.uuidString)") }
+                    .onDrop(of: [.text], delegate: SSHConnectionDropDelegate(targetConnectionID: connection.id, store: workspaceStore))
             }
 
             ForEach(workspaceStore.rootWebLinks.filter { !isFiltering || webLinkMatchesSearch($0, query: searchText) }) { webLink in
@@ -1819,6 +1820,7 @@ private struct FolderTreeRow: View {
                         .onDrag {
                             treeItemProvider("ssh:\(connection.id.uuidString)")
                         }
+                        .onDrop(of: [.text], delegate: SSHConnectionDropDelegate(targetConnectionID: connection.id, store: workspaceStore))
                 }
                 ForEach(matchingWebLinks) { webLink in
                     HStack(spacing: 6) {
@@ -1944,6 +1946,33 @@ private struct FolderDropDelegate: DropDelegate {
                 default:
                     break
                 }
+            }
+        }
+        return true
+    }
+}
+
+private struct SSHConnectionDropDelegate: DropDelegate {
+    let targetConnectionID: UUID
+    let store: SecureWorkspaceStore
+
+    func validateDrop(info: DropInfo) -> Bool {
+        !store.isProcessing && info.hasItemsConforming(to: [.text])
+    }
+
+    func dropUpdated(info: DropInfo) -> DropProposal? {
+        DropProposal(operation: .move)
+    }
+
+    func performDrop(info: DropInfo) -> Bool {
+        guard let provider = info.itemProviders(for: [.text]).first else { return false }
+
+        provider.loadObject(ofClass: NSString.self) { value, _ in
+            guard let payload = value as? String,
+                  payload.hasPrefix("ssh:"),
+                  let id = UUID(uuidString: String(payload.dropFirst(4))) else { return }
+            DispatchQueue.main.async {
+                store.moveSSHConnection(id: id, before: targetConnectionID)
             }
         }
         return true

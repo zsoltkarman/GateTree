@@ -1670,6 +1670,34 @@ final class SecureWorkspaceStore: ObservableObject {
         save()
     }
 
+    func moveSSHConnection(id: UUID, before targetID: UUID) {
+        guard !isProcessing, id != targetID else { return }
+
+        var updatedFolders = folders
+        var updatedRootConnections = rootConnections
+        let connection: SSHConnection?
+
+        if let rootIndex = updatedRootConnections.firstIndex(where: { $0.id == id }) {
+            connection = updatedRootConnections.remove(at: rootIndex)
+        } else {
+            connection = removeConnection(id, from: &updatedFolders)
+        }
+
+        guard let connection else { return }
+
+        if let targetIndex = updatedRootConnections.firstIndex(where: { $0.id == targetID }) {
+            updatedRootConnections.insert(connection, at: targetIndex)
+        } else if !insert(connection, before: targetID, in: &updatedFolders) {
+            // The target disappeared while dragging; retain the connection safely.
+            updatedRootConnections.append(connection)
+        }
+
+        folders = updatedFolders
+        rootConnections = updatedRootConnections
+        synchronizeWorkspace()
+        save()
+    }
+
     func moveSSHConnectionToTrash(_ id: UUID) {
         moveSSHConnection(id: id, into: trashFolderID())
     }
@@ -1817,6 +1845,17 @@ final class SecureWorkspaceStore: ObservableObject {
             if insert(connection, into: &folders[index].children, below: parentID) {
                 return true
             }
+        }
+        return false
+    }
+
+    private func insert(_ connection: SSHConnection, before targetID: UUID, in folders: inout [WorkspaceFolder]) -> Bool {
+        for index in folders.indices {
+            if let targetIndex = folders[index].connections.firstIndex(where: { $0.id == targetID }) {
+                folders[index].connections.insert(connection, at: targetIndex)
+                return true
+            }
+            if insert(connection, before: targetID, in: &folders[index].children) { return true }
         }
         return false
     }
