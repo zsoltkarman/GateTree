@@ -570,34 +570,24 @@ private struct PaneRail: View {
                 .joined(separator: " ")
                 .lowercased()
             guard normalizedSearch.isEmpty || searchable.contains(normalizedSearch) else { return false }
-            switch category {
-            case .thanos: return searchable.contains("thanos")
-            case .grafana: return searchable.contains("grafana")
-            case .confluence: return searchable.contains("confluence")
-            case .jira: return searchable.contains("jira")
-            case .scm: return searchable.contains("scm") || searchable.contains("github") || searchable.contains("gitlab") || searchable.contains("bitbucket")
-            case .dashboards: return searchable.contains("dashboard")
-            case .web:
-                return ![PaneCategory.thanos, .grafana, .confluence, .jira, .scm, .dashboards]
-                    .contains(where: { other in webLinksMatch(webLink, category: other) })
-            case .ssh, .rdp: return false
-            }
+            return primaryWebCategory(for: webLink) == category
         }
     }
 
-    private func webLinksMatch(_ webLink: WebLink, category: PaneCategory) -> Bool {
+    /// A web page can legitimately mention multiple technologies (for example
+    /// a Grafana dashboard backed by Thanos).  Give it one predictable home
+    /// instead of rendering the same open pane in multiple sections.
+    private func primaryWebCategory(for webLink: WebLink) -> PaneCategory {
         let searchable = ([webLink.name, webLink.url] + webLink.tags)
             .joined(separator: " ")
             .lowercased()
-        switch category {
-        case .thanos: return searchable.contains("thanos")
-        case .grafana: return searchable.contains("grafana")
-        case .confluence: return searchable.contains("confluence")
-        case .jira: return searchable.contains("jira")
-        case .scm: return searchable.contains("scm") || searchable.contains("github") || searchable.contains("gitlab") || searchable.contains("bitbucket")
-        case .dashboards: return searchable.contains("dashboard")
-        default: return false
-        }
+        if searchable.contains("github") || searchable.contains("gitlab") || searchable.contains("bitbucket") || searchable.contains("scm") { return .scm }
+        if searchable.contains("confluence") { return .confluence }
+        if searchable.contains("jira") { return .jira }
+        if searchable.contains("grafana") { return .grafana }
+        if searchable.contains("thanos") { return .thanos }
+        if searchable.contains("dashboard") { return .dashboards }
+        return .web
     }
 
     var body: some View {
