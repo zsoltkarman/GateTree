@@ -3147,6 +3147,20 @@ private struct EncryptionSetupView: View {
     @State private var password = ""
     @State private var confirmation = ""
 
+    private var validationMessage: String? {
+        if !password.isEmpty && password.count < 8 {
+            return "Use at least 8 characters for the master password."
+        }
+        if !confirmation.isEmpty && password != confirmation {
+            return "The master passwords do not match."
+        }
+        return nil
+    }
+
+    private var canEncrypt: Bool {
+        password.count >= 8 && password == confirmation
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text("Encrypt Workspace")
@@ -3157,6 +3171,16 @@ private struct EncryptionSetupView: View {
                 .textFieldStyle(.roundedBorder)
             SecureField("Confirm master password", text: $confirmation)
                 .textFieldStyle(.roundedBorder)
+
+            if let validationMessage {
+                Label(validationMessage, systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption)
+                    .foregroundStyle(.red)
+            } else {
+                Text("At least 8 characters. Both fields must match.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
 
             HStack {
                 Button("Cancel") { workspaceStore.isShowingEncryptionSetup = false }
@@ -3169,7 +3193,7 @@ private struct EncryptionSetupView: View {
                     workspaceStore.encryptWorkspace(masterPassword: password)
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(workspaceStore.isProcessing || password.isEmpty || confirmation.isEmpty)
+                .disabled(workspaceStore.isProcessing || !canEncrypt)
             }
 
             if workspaceStore.isProcessing { ProgressView("Encrypting workspace…") }

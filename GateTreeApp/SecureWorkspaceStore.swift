@@ -248,8 +248,8 @@ final class SecureWorkspaceStore: ObservableObject {
     }
 
     func createWorkspace(masterPassword: String) {
-        guard masterPassword.count >= 12 else {
-            errorMessage = "Use at least 12 characters for the master password."
+        guard masterPassword.count >= 8 else {
+            errorMessage = "Use at least 8 characters for the master password."
             return
         }
 
@@ -543,8 +543,8 @@ final class SecureWorkspaceStore: ObservableObject {
     }
 
     func changeMasterPassword(currentPassword: String, newPassword: String) {
-        guard newPassword.count >= 12 else {
-            errorMessage = "Use at least 12 characters for the new master password."
+        guard newPassword.count >= 8 else {
+            errorMessage = "Use at least 8 characters for the new master password."
             return
         }
         isProcessing = true
@@ -569,8 +569,8 @@ final class SecureWorkspaceStore: ObservableObject {
     }
 
     func encryptWorkspace(masterPassword: String) {
-        guard masterPassword.count >= 12 else {
-            errorMessage = "Use at least 12 characters for the master password."
+        guard masterPassword.count >= 8 else {
+            errorMessage = "Use at least 8 characters for the master password."
             return
         }
         isProcessing = true
