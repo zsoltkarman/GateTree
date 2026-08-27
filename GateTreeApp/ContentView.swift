@@ -56,6 +56,7 @@ struct ContentView: View {
     @State private var sidebarDragStartWidth: CGFloat?
     @State private var isSearchHelpPresented = false
     @State private var didPrepareConnectionResources = false
+    @State private var isPaneRailExpanded = false
 
     var body: some View {
         Group {
@@ -130,8 +131,7 @@ struct ContentView: View {
                             if workspaceStore.isShowingCredentials {
                                 CredentialsManagerView()
                             } else if workspaceStore.isShowingSSHUsernamePrompt || workspaceStore.isShowingRDPUsernamePrompt || workspaceStore.isShowingCodexResult || !workspaceStore.openSSHConnections.isEmpty || !workspaceStore.openRDPConnections.isEmpty || !workspaceStore.openExternalWebLinks.isEmpty {
-                                VStack(spacing: 0) {
-                                    SessionTabBar()
+                                ZStack(alignment: .trailing) {
                                     ZStack {
                                         if workspaceStore.isShowingCodexResult {
                                             CodexResultPane()
@@ -167,6 +167,11 @@ struct ContentView: View {
                                                 .zIndex(1)
                                         }
                                     }
+                                    PaneRail(isExpanded: $isPaneRailExpanded)
+                                        .zIndex(10)
+                                }
+                                .onExitCommand {
+                                    isPaneRailExpanded = false
                                 }
                             } else {
                                 ContentUnavailableView(
@@ -463,6 +468,231 @@ private struct GateTreeAboutView: View {
         }
         .padding(24)
         .frame(width: 470, alignment: .leading)
+    }
+}
+
+/// A compact, overlaying switcher for the open panes.  It deliberately lives
+/// in the ZStack above the terminal, so expanding it never changes the size
+/// of a live SSH/RDP session.
+private struct PaneRail: View {
+    @EnvironmentObject private var workspaceStore: SecureWorkspaceStore
+    @Binding var isExpanded: Bool
+
+    private var sessionCount: Int {
+        workspaceStore.openSSHConnections.count + workspaceStore.openRDPConnections.count
+    }
+
+    var body: some View {
+        HStack(spacing: 0) {
+            if isExpanded {
+                paneList
+                    .transition(.move(edge: .trailing).combined(with: .opacity))
+            }
+
+            rail
+        }
+        .frame(maxHeight: .infinity, alignment: .trailing)
+        .animation(.easeInOut(duration: 0.16), value: isExpanded)
+        .shadow(color: .black.opacity(isExpanded ? 0.18 : 0.08), radius: isExpanded ? 8 : 3, x: -2, y: 0)
+    }
+
+    private var rail: some View {
+        VStack(spacing: 8) {
+            Button {
+                isExpanded.toggle()
+            } label: {
+                Image(systemName: "sidebar.trailing")
+                    .font(.system(size: 14, weight: .semibold))
+                    .frame(width: 30, height: 30)
+            }
+            .buttonStyle(.plain)
+            .help(isExpanded ? "Hide open panes" : "Show open panes")
+
+            Divider()
+
+            Button {
+                isExpanded = true
+            } label: {
+                railIcon("terminal", count: sessionCount)
+            }
+            .buttonStyle(.plain)
+            .help("Open SSH and RDP sessions")
+
+            Button {
+                isExpanded = true
+            } label: {
+                railIcon("globe", count: workspaceStore.openExternalWebLinks.count)
+            }
+            .buttonStyle(.plain)
+            .help("Open web panes")
+
+            Spacer()
+
+            Button {
+                isExpanded = false
+            } label: {
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 11, weight: .bold))
+                    .frame(width: 30, height: 30)
+            }
+            .buttonStyle(.plain)
+            .help("Hide open panes")
+        }
+        .padding(.vertical, 8)
+        .frame(minWidth: 42, maxWidth: 42, maxHeight: .infinity)
+        .background(.bar)
+        .overlay(alignment: .leading) { Divider() }
+    }
+
+    private func railIcon(_ name: String, count: Int) -> some View {
+        ZStack(alignment: .topTrailing) {
+            Image(systemName: name)
+                .font(.system(size: 13, weight: .medium))
+                .frame(width: 30, height: 30)
+            if count > 0 {
+                Text("\(count)")
+                    .font(.system(size: 8, weight: .bold))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 4)
+                    .padding(.vertical, 1)
+                    .background(Color.accentColor, in: Capsule())
+                    .offset(x: 3, y: -2)
+            }
+        }
+    }
+
+    private var paneList: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack {
+                Text("Open panes")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Button {
+                    isExpanded = false
+                } label: {
+                    Image(systemName: "chevron.right")
+                }
+                .buttonStyle(.plain)
+                .help("Hide open panes")
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 11)
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 12) {
+                    if sessionCount > 0 {
+                        paneSection("SSH / RDP", icon: "terminal", count: sessionCount) {
+                            ForEach(workspaceStore.openSSHConnections) { connection in
+                                paneRow(
+                                    title: connection.name,
+                                    icon: "terminal",
+                                    isActive: workspaceStore.activeSessionProtocol == .ssh && workspaceStore.activeSessionID == connection.id,
+                                    select: {
+                                        workspaceStore.isShowingCodexResult = false
+                                        workspaceStore.selectOpenSSHConnection(connection)
+                                    },
+                                    close: { workspaceStore.closeSSHConnection(connection.id) }
+                                )
+                            }
+                            ForEach(workspaceStore.openRDPConnections) { connection in
+                                paneRow(
+                                    title: connection.name,
+                                    icon: "rectangle.inset.filled",
+                                    isActive: workspaceStore.activeSessionProtocol == .rdp && workspaceStore.activeSessionID == connection.id,
+                                    select: {
+                                        workspaceStore.isShowingCodexResult = false
+                                        workspaceStore.selectOpenRDPConnection(connection)
+                                    },
+                                    close: { workspaceStore.closeRDPConnection(connection.id) }
+                                )
+                            }
+                        }
+                    }
+
+                    if !workspaceStore.openExternalWebLinks.isEmpty {
+                        paneSection("Web", icon: "globe", count: workspaceStore.openExternalWebLinks.count) {
+                            ForEach(workspaceStore.openExternalWebLinks) { webLink in
+                                paneRow(
+                                    title: webLink.name,
+                                    icon: "globe",
+                                    isActive: workspaceStore.activeExternalWebLink?.id == webLink.id,
+                                    select: {
+                                        workspaceStore.isShowingCodexResult = false
+                                        workspaceStore.selectOpenExternalWebLink(webLink)
+                                    },
+                                    close: { workspaceStore.closeExternalWebLink(webLink.id) }
+                                )
+                            }
+                        }
+                    }
+
+                    if workspaceStore.isCodexRunning || !workspaceStore.codexResult.isEmpty {
+                        paneSection("Tools", icon: "sparkles", count: 1) {
+                            paneRow(
+                                title: "Incident triage",
+                                icon: "sparkles",
+                                isActive: workspaceStore.isShowingCodexResult,
+                                select: { workspaceStore.isShowingCodexResult = true },
+                                close: workspaceStore.isCodexRunning ? nil : { workspaceStore.closeCodexResult() }
+                            )
+                        }
+                    }
+                }
+                .padding(10)
+            }
+        }
+        .frame(minWidth: 280, maxWidth: 280, maxHeight: .infinity, alignment: .topLeading)
+        .background(.regularMaterial)
+        .overlay(alignment: .leading) { Divider() }
+    }
+
+    private func paneSection<Content: View>(
+        _ title: String,
+        icon: String,
+        count: Int,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Label("\(title)  \(count)", systemImage: icon)
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(.secondary)
+            content()
+        }
+    }
+
+    private func paneRow(
+        title: String,
+        icon: String,
+        isActive: Bool,
+        select: @escaping () -> Void,
+        close: (() -> Void)?
+    ) -> some View {
+        HStack(spacing: 7) {
+            Button {
+                select()
+                isExpanded = false
+            } label: {
+                Label(title, systemImage: icon)
+                    .lineLimit(1)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .buttonStyle(.plain)
+
+            if let close {
+                Button(action: close) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 9, weight: .semibold))
+                }
+                .buttonStyle(.plain)
+                .help("Close pane")
+            }
+        }
+        .font(.system(size: 12))
+        .padding(.horizontal, 8)
+        .padding(.vertical, 7)
+        .background(isActive ? Color.accentColor.opacity(0.22) : Color.primary.opacity(0.04))
+        .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
     }
 }
 
