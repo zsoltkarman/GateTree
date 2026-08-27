@@ -3357,26 +3357,21 @@ private struct MasterPasswordView: View {
 
             SecureField("Master password", text: $password)
                 .textFieldStyle(.roundedBorder)
+                .onSubmit { submit() }
 
             if workspaceStore.needsMasterPasswordSetup {
                 SecureField("Confirm master password", text: $confirmation)
                     .textFieldStyle(.roundedBorder)
+                    .onSubmit { submit() }
             }
 
             HStack {
                 Spacer()
                 Button(workspaceStore.needsMasterPasswordSetup ? "Create encrypted workspace" : "Unlock") {
-                    if workspaceStore.needsMasterPasswordSetup {
-                        guard password == confirmation else {
-                            workspaceStore.errorMessage = "The master passwords do not match."
-                            return
-                        }
-                        workspaceStore.createWorkspace(masterPassword: password)
-                    } else {
-                        workspaceStore.unlock(masterPassword: password)
-                    }
+                    submit()
                 }
                 .buttonStyle(.borderedProminent)
+                .keyboardShortcut(.defaultAction)
                 .disabled(workspaceStore.isProcessing || password.isEmpty || (workspaceStore.needsMasterPasswordSetup && confirmation.isEmpty))
             }
 
@@ -3395,5 +3390,18 @@ private struct MasterPasswordView: View {
         }
         .padding(28)
         .frame(width: 440)
+    }
+
+    private func submit() {
+        guard !workspaceStore.isProcessing, !password.isEmpty else { return }
+        if workspaceStore.needsMasterPasswordSetup {
+            guard !confirmation.isEmpty, password == confirmation else {
+                workspaceStore.errorMessage = "The master passwords do not match."
+                return
+            }
+            workspaceStore.createWorkspace(masterPassword: password)
+        } else {
+            workspaceStore.unlock(masterPassword: password)
+        }
     }
 }
