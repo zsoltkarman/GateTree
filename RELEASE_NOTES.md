@@ -1,4 +1,4 @@
-# GateTree - next release
+# GateTree 0.3.9
 
 ## Open panes, grouped by service
 
