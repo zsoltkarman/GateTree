@@ -399,7 +399,7 @@ private struct SearchHelpView: View {
             Label("Search Help", systemImage: "magnifyingglass")
                 .font(.headline)
 
-            Text("Use one or more words. Every word must match a name, address, or tag; matching ignores capitalization.")
+            Text("Use one or more words. Every word must match a name, address, tag, or encrypted note title/content; matching ignores capitalization.")
                 .fixedSize(horizontal: false, vertical: true)
 
             VStack(alignment: .leading, spacing: 5) {
@@ -462,6 +462,10 @@ private struct GateTreeAboutView: View {
                 Text("• Use the search field to filter by name, address, or tag. Results are grouped by folder path, so repeated service names remain distinguishable; the × icon clears the search.")
                 Text("• Right-click a folder and choose New Folder to create a child folder. The destination folder stays expanded so the new item remains visible.")
                 Text("• Right-click an item and choose Move to Trash. Right-click Trash and choose Empty Trash… to permanently delete its contents.")
+                Text("• Notes are available from the sidebar above Applications and are stored only inside an encrypted workspace. Select Notes in a plaintext workspace to start encryption setup.")
+                Text("• Use + for a new note and the folder+ button for a one-level note folder. Right-click Root notes or a folder to create a note there; right-click a folder to rename or safely delete it. Deleting a folder moves its notes to Root notes.")
+                Text("• Right-click a note to open or delete it. Drag a note onto Root notes or another note folder to move it. The note editor preserves literal text such as ------ for commands and separators.")
+                Text("• Save writes the encrypted note and closes its editor; the note remains in the list.")
                 Text("• KeePassXC credential references can be inherited by child SSH and RDP connections.")
                 Text("• When creating a KeePassXC credential, choose the .kdbx file and enter the entry path: its group path plus entry title. A copied full Group Path (for example /Operations/...) or a root-relative path both work.")
             }
@@ -1083,6 +1087,9 @@ private struct NotesWorkspaceView: View {
     @State private var bodyText = ""
     @State private var newFolderName = ""
     @State private var isAddingFolder = false
+    @State private var isRenamingFolder = false
+    @State private var renamingFolderID: UUID?
+    @State private var renamingFolderName = ""
 
     private var selectedNote: WorkspaceNote? {
         workspaceStore.notes.first { $0.id == selectedID }
@@ -1143,31 +1150,49 @@ private struct NotesWorkspaceView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     folderRow(title: "Root notes", icon: "tray.full", id: nil)
                     ForEach(workspaceStore.noteFolders) { folder in
-                        HStack(spacing: 2) {
-                            folderRow(title: folder.name, icon: "folder", id: folder.id)
-                            Button(role: .destructive) {
-                                workspaceStore.deleteNoteFolder(folder.id)
-                                if selectedFolderID == folder.id { selectedFolderID = nil }
-                            } label: {
-                                Image(systemName: "xmark")
-                                    .font(.system(size: 9, weight: .semibold))
-                            }
-                            .buttonStyle(.plain)
-                            .help("Delete folder and move its notes to Root notes")
-                            .padding(.trailing, 8)
-                        }
+                        folderRow(title: folder.name, icon: "folder", id: folder.id)
                     }
                 }
                 .padding(.horizontal, 6)
 
                 Divider()
 
-                List(selection: $selectedID) {
-                    ForEach(filteredNotes) { note in
-                        Text(note.title.isEmpty ? "Untitled note" : note.title)
-                            .tag(note.id)
+                // Do not use List(selection:) here: on macOS its focus and
+                // drag recognizers can swallow the first click of a row.
+                // These explicit buttons select on the very first click.
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 1) {
+                        ForEach(filteredNotes) { note in
+                            Button {
+                                select(note)
+                            } label: {
+                                Text(note.title.isEmpty ? "Untitled note" : note.title)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .padding(.horizontal, 7)
+                                    .padding(.vertical, 4)
+                                    .background(selectedID == note.id ? Color.accentColor.opacity(0.72) : .clear)
+                                    .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+                            }
+                            .buttonStyle(.plain)
+                            .contentShape(Rectangle())
                             .onDrag { noteItemProvider(note.id) }
+                            .contextMenu {
+                                Button("Open") {
+                                    select(note)
+                                }
+                                Divider()
+                                Button("Delete note", role: .destructive) {
+                                    let nextNote = filteredNotes.first { $0.id != note.id }
+                                    workspaceStore.deleteNote(note.id)
+                                    if selectedID == note.id {
+                                        select(nextNote)
+                                    }
+                                }
+                            }
+                        }
                     }
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 3)
                 }
                 .onChange(of: selectedID) { _ in select(selectedNote) }
                 .onChange(of: searchText) { _ in
@@ -1200,9 +1225,7 @@ private struct NotesWorkspaceView: View {
                         .buttonStyle(.bordered)
                         .help("Delete note")
                     }
-                    TextEditor(text: $bodyText)
-                        .font(.system(.body, design: .monospaced))
-                        .scrollContentBackground(.hidden)
+                    PlainTextNoteEditor(text: $bodyText)
                         .padding(8)
                         .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
                 } else {
@@ -1214,6 +1237,20 @@ private struct NotesWorkspaceView: View {
             }
             .padding(20)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .alert("Rename note folder", isPresented: $isRenamingFolder) {
+            TextField("Folder name", text: $renamingFolderName)
+            Button("Cancel", role: .cancel) {
+                renamingFolderID = nil
+            }
+            Button("Rename") {
+                if let renamingFolderID {
+                    workspaceStore.renameNoteFolder(renamingFolderID, to: renamingFolderName)
+                }
+                renamingFolderID = nil
+            }
+        } message: {
+            Text("Folder names are unique within Notes.")
         }
         .onAppear { select(filteredNotes.first) }
     }
@@ -1227,6 +1264,9 @@ private struct NotesWorkspaceView: View {
     private func saveDraft() {
         guard let selectedNote else { return }
         workspaceStore.updateNote(selectedNote, title: title, body: bodyText)
+        // Saving is also the explicit "close note" action: the note remains
+        // in the encrypted list, but its editor no longer occupies the pane.
+        select(nil)
     }
 
     private func addFolder() {
@@ -1264,10 +1304,84 @@ private struct NotesWorkspaceView: View {
             of: [.text],
             delegate: NoteFolderDropDelegate(folderID: id, workspaceStore: workspaceStore)
         )
+        .contextMenu {
+            Button("New note") {
+                let note = WorkspaceNote(title: "Untitled note", body: "")
+                workspaceStore.createNote(title: note.title, body: note.body, folderID: id)
+                selectedFolderID = id
+                select(workspaceStore.notes.last)
+            }
+            if let id {
+                Divider()
+                Button("Rename…") {
+                    renamingFolderID = id
+                    renamingFolderName = title
+                    isRenamingFolder = true
+                }
+                Button("Delete folder", role: .destructive) {
+                    workspaceStore.deleteNoteFolder(id)
+                    if selectedFolderID == id { selectedFolderID = nil }
+                }
+            }
+        }
     }
 
     private func noteItemProvider(_ id: UUID) -> NSItemProvider {
         NSItemProvider(object: "GateTreeNote:\(id.uuidString)" as NSString)
+    }
+}
+
+/// AppKit's normal rich-text substitutions turn sequences such as `------`
+/// into typography. Notes frequently contain shell commands and separators, so
+/// keep their editor deliberately literal.
+private struct PlainTextNoteEditor: NSViewRepresentable {
+    @Binding var text: String
+
+    func makeCoordinator() -> Coordinator { Coordinator(text: $text) }
+
+    func makeNSView(context: Context) -> NSScrollView {
+        let scrollView = NSScrollView()
+        scrollView.hasVerticalScroller = true
+        scrollView.autohidesScrollers = true
+        scrollView.drawsBackground = false
+
+        let textView = NSTextView()
+        textView.string = text
+        textView.delegate = context.coordinator
+        textView.isRichText = false
+        textView.importsGraphics = false
+        textView.allowsImageEditing = false
+        textView.isAutomaticDashSubstitutionEnabled = false
+        textView.isAutomaticQuoteSubstitutionEnabled = false
+        textView.isAutomaticTextReplacementEnabled = false
+        textView.font = .monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
+        textView.drawsBackground = false
+        textView.isVerticallyResizable = true
+        textView.isHorizontallyResizable = false
+        textView.autoresizingMask = [.width]
+        textView.textContainer?.widthTracksTextView = true
+        textView.textContainer?.containerSize = NSSize(width: 0, height: CGFloat.greatestFiniteMagnitude)
+        scrollView.documentView = textView
+        return scrollView
+    }
+
+    func updateNSView(_ scrollView: NSScrollView, context: Context) {
+        guard let textView = scrollView.documentView as? NSTextView,
+              textView.string != text else { return }
+        textView.string = text
+    }
+
+    final class Coordinator: NSObject, NSTextViewDelegate {
+        @Binding private var text: String
+
+        init(text: Binding<String>) {
+            _text = text
+        }
+
+        func textDidChange(_ notification: Notification) {
+            guard let textView = notification.object as? NSTextView else { return }
+            text = textView.string
+        }
     }
 }
 

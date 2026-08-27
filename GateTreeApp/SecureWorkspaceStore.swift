@@ -474,6 +474,22 @@ final class SecureWorkspaceStore: ObservableObject {
         save()
     }
 
+    func renameNoteFolder(_ id: UUID, to name: String) {
+        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard storageMode == .encrypted,
+              !trimmedName.isEmpty,
+              let index = noteFolders.firstIndex(where: { $0.id == id }) else { return }
+        guard !noteFolders.contains(where: {
+            $0.id != id && $0.name.localizedCaseInsensitiveCompare(trimmedName) == .orderedSame
+        }) else {
+            errorMessage = "A note folder with this name already exists."
+            return
+        }
+        noteFolders[index].name = trimmedName
+        synchronizeWorkspace()
+        save()
+    }
+
     func updateNote(_ note: WorkspaceNote, title: String, body: String) {
         guard storageMode == .encrypted,
               let index = notes.firstIndex(where: { $0.id == note.id }) else { return }

@@ -44,8 +44,9 @@ GateTree can keep track of the corresponding Chrome tab and bring it to the
   connection names, hosts, bookmark names, URLs and tags; every web pane has
   one primary category, so it never appears twice.
 - **Encrypted Notes** with full-text search, Root notes and one level of
-  folders. Notes can be dragged between folders and are stored only in the
-  encrypted workspace payload; GateTree has no separate plaintext note file.
+  folders. Right-click notes and folders to manage them; notes can be dragged
+  between folders and are stored only in the encrypted workspace payload.
+  GateTree has no separate plaintext note file.
 - **Incident triage** that passes supplied alert context to a locally installed
   Codex CLI in read-only mode and displays the result in an app tab.
 - **Workspace protection** with plaintext or encrypted workspace modes,
