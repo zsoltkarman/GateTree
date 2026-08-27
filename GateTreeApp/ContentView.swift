@@ -1020,6 +1020,7 @@ private struct SidebarConnections: View {
                 Label("Connections", systemImage: isExpanded ? "chevron.down" : "chevron.right")
                     .font(.system(size: 12, weight: .medium))
                     .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
             .buttonStyle(.plain)
             .padding(.horizontal, 8)
@@ -1171,6 +1172,7 @@ private struct SidebarApplications: View {
                 Label("Applications", systemImage: isExpanded ? "chevron.down" : "chevron.right")
                     .font(.system(size: 12, weight: .medium))
                     .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
             .buttonStyle(.plain)
 
