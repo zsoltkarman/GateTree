@@ -1,21 +1,19 @@
-# GateTree 0.3.9
+# GateTree 0.4.0
 
-## Open panes, grouped by service
+## Encrypted Notes
 
-- Replaced the mixed top tabs with a compact **Open panes** rail on the right.
-- Opening the rail overlays the active SSH or RDP session; it does not resize
-  or interrupt the live terminal.
-- Panes are grouped with coloured icons: **SSH**, **RDP**, **Thanos**,
-  **Grafana**, **Confluence**, **Jira**, **SCM**, **Dashboards** and **Web**.
-- Added live search in Open panes. Search by connection name, host, service,
-  bookmark name, URL or tag.
-- A web pane is assigned to one primary service group, avoiding duplicate
-  entries when a URL contains more than one technology name.
-- Choosing a pane, pressing Escape or using the collapse button hides the
-  expanded rail again.
+- Added a built-in **Notes** workspace above Applications in the sidebar.
+- Notes are stored only inside the encrypted workspace payload. There is no
+  separate plaintext note file or autosave location.
+- Added Root notes and one-level note folders. Drag notes between folders or
+  back to Root notes; deleting a folder safely moves its notes to the root.
+- The main search also searches note titles and note contents.
+- Notes require an encrypted workspace. Selecting Notes in a plaintext
+  workspace now opens the encryption flow directly.
 
-## Connection workflow improvements
+## Workspace polish
 
-- SSH connection ordering can be changed with drag and drop in the tree.
-- International keyboard Option characters, including the Hungarian pipe
-  character, are passed through to embedded SSH sessions.
+- Connections and Applications are collapsible, left-aligned sidebar sections.
+- Master-password setup and unlock submit with one press of Return.
+- Password validation is immediate: eight characters are required and the
+  confirmation must match before encryption can start.
