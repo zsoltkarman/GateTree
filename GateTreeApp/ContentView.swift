@@ -478,8 +478,99 @@ private struct PaneRail: View {
     @EnvironmentObject private var workspaceStore: SecureWorkspaceStore
     @Binding var isExpanded: Bool
 
-    private var sessionCount: Int {
-        workspaceStore.openSSHConnections.count + workspaceStore.openRDPConnections.count
+    private enum PaneCategory: String, CaseIterable, Identifiable {
+        case ssh, rdp, thanos, grafana, confluence, jira, scm, dashboards, web
+
+        var id: String { rawValue }
+
+        var title: String {
+            switch self {
+            case .ssh: "SSH"
+            case .rdp: "RDP"
+            case .thanos: "Thanos"
+            case .grafana: "Grafana"
+            case .confluence: "Confluence"
+            case .jira: "Jira"
+            case .scm: "SCM"
+            case .dashboards: "Dashboards"
+            case .web: "Web"
+            }
+        }
+
+        var icon: String {
+            switch self {
+            case .ssh: "terminal"
+            case .rdp: "display"
+            case .thanos: "chart.line.uptrend.xyaxis"
+            case .grafana: "gauge.with.dots.needle.50percent"
+            case .confluence: "text.alignleft"
+            case .jira: "diamond.fill"
+            case .scm: "arrow.triangle.branch"
+            case .dashboards: "rectangle.3.group.fill"
+            case .web: "globe"
+            }
+        }
+
+        var color: Color {
+            switch self {
+            case .ssh: .green
+            case .rdp: .blue
+            case .thanos: .purple
+            case .grafana: .orange
+            case .confluence: .cyan
+            case .jira: .indigo
+            case .scm: .teal
+            case .dashboards: .mint
+            case .web: .secondary
+            }
+        }
+    }
+
+    private var visibleCategories: [PaneCategory] {
+        PaneCategory.allCases.filter { count(for: $0) > 0 }
+    }
+
+    private func count(for category: PaneCategory) -> Int {
+        switch category {
+        case .ssh: return workspaceStore.openSSHConnections.count
+        case .rdp: return workspaceStore.openRDPConnections.count
+        default: return webLinks(for: category).count
+        }
+    }
+
+    private func webLinks(for category: PaneCategory) -> [WebLink] {
+        workspaceStore.openExternalWebLinks.filter { webLink in
+            let searchable = ([webLink.name, webLink.url] + webLink.tags)
+                .joined(separator: " ")
+                .lowercased()
+            switch category {
+            case .thanos: return searchable.contains("thanos")
+            case .grafana: return searchable.contains("grafana")
+            case .confluence: return searchable.contains("confluence")
+            case .jira: return searchable.contains("jira")
+            case .scm: return searchable.contains("scm") || searchable.contains("github") || searchable.contains("gitlab") || searchable.contains("bitbucket")
+            case .dashboards: return searchable.contains("dashboard")
+            case .web:
+                return ![PaneCategory.thanos, .grafana, .confluence, .jira, .scm, .dashboards]
+                    .contains(where: { other in webLinksMatch(webLink, category: other) })
+            case .ssh, .rdp: return false
+            }
+        }
+    }
+
+    private func webLinksMatch(_ webLink: WebLink, category: PaneCategory) -> Bool {
+        let searchable = ([webLink.name, webLink.url] + webLink.tags)
+            .joined(separator: " ")
+            .lowercased()
+        switch category {
+        case .thanos: return searchable.contains("thanos")
+        case .grafana: return searchable.contains("grafana")
+        case .confluence: return searchable.contains("confluence")
+        case .jira: return searchable.contains("jira")
+        case .scm: return searchable.contains("scm") || searchable.contains("github") || searchable.contains("gitlab") || searchable.contains("bitbucket")
+        case .dashboards: return searchable.contains("dashboard")
+        default: return false
+        }
     }
 
     var body: some View {
@@ -508,23 +599,19 @@ private struct PaneRail: View {
             .buttonStyle(.plain)
             .help(isExpanded ? "Hide open panes" : "Show open panes")
 
-            Divider()
+            if !visibleCategories.isEmpty {
+                Divider()
 
-            Button {
-                isExpanded = true
-            } label: {
-                railIcon("terminal", count: sessionCount)
+                ForEach(visibleCategories) { category in
+                    Button {
+                        isExpanded = true
+                    } label: {
+                        railIcon(category)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Open \(category.title) panes")
+                }
             }
-            .buttonStyle(.plain)
-            .help("Open SSH and RDP sessions")
-
-            Button {
-                isExpanded = true
-            } label: {
-                railIcon("globe", count: workspaceStore.openExternalWebLinks.count)
-            }
-            .buttonStyle(.plain)
-            .help("Open web panes")
 
             Spacer()
 
@@ -544,18 +631,19 @@ private struct PaneRail: View {
         .overlay(alignment: .leading) { Divider() }
     }
 
-    private func railIcon(_ name: String, count: Int) -> some View {
+    private func railIcon(_ category: PaneCategory) -> some View {
         ZStack(alignment: .topTrailing) {
-            Image(systemName: name)
+            Image(systemName: category.icon)
                 .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(category.color)
                 .frame(width: 30, height: 30)
-            if count > 0 {
-                Text("\(count)")
+            if count(for: category) > 0 {
+                Text("\(count(for: category))")
                     .font(.system(size: 8, weight: .bold))
                     .foregroundStyle(.white)
                     .padding(.horizontal, 4)
                     .padding(.vertical, 1)
-                    .background(Color.accentColor, in: Capsule())
+                    .background(category.color, in: Capsule())
                     .offset(x: 3, y: -2)
             }
         }
@@ -581,12 +669,14 @@ private struct PaneRail: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
-                    if sessionCount > 0 {
-                        paneSection("SSH / RDP", icon: "terminal", count: sessionCount) {
-                            ForEach(workspaceStore.openSSHConnections) { connection in
+                    ForEach(visibleCategories) { category in
+                        paneSection(category) {
+                            if category == .ssh {
+                                ForEach(workspaceStore.openSSHConnections) { connection in
                                 paneRow(
                                     title: connection.name,
-                                    icon: "terminal",
+                                    icon: category.icon,
+                                    iconColor: category.color,
                                     isActive: workspaceStore.activeSessionProtocol == .ssh && workspaceStore.activeSessionID == connection.id,
                                     select: {
                                         workspaceStore.isShowingCodexResult = false
@@ -594,11 +684,13 @@ private struct PaneRail: View {
                                     },
                                     close: { workspaceStore.closeSSHConnection(connection.id) }
                                 )
-                            }
-                            ForEach(workspaceStore.openRDPConnections) { connection in
+                                }
+                            } else if category == .rdp {
+                                ForEach(workspaceStore.openRDPConnections) { connection in
                                 paneRow(
                                     title: connection.name,
-                                    icon: "rectangle.inset.filled",
+                                    icon: category.icon,
+                                    iconColor: category.color,
                                     isActive: workspaceStore.activeSessionProtocol == .rdp && workspaceStore.activeSessionID == connection.id,
                                     select: {
                                         workspaceStore.isShowingCodexResult = false
@@ -606,16 +698,13 @@ private struct PaneRail: View {
                                     },
                                     close: { workspaceStore.closeRDPConnection(connection.id) }
                                 )
-                            }
-                        }
-                    }
-
-                    if !workspaceStore.openExternalWebLinks.isEmpty {
-                        paneSection("Web", icon: "globe", count: workspaceStore.openExternalWebLinks.count) {
-                            ForEach(workspaceStore.openExternalWebLinks) { webLink in
+                                }
+                            } else {
+                                ForEach(webLinks(for: category)) { webLink in
                                 paneRow(
                                     title: webLink.name,
-                                    icon: "globe",
+                                    icon: category.icon,
+                                    iconColor: category.color,
                                     isActive: workspaceStore.activeExternalWebLink?.id == webLink.id,
                                     select: {
                                         workspaceStore.isShowingCodexResult = false
@@ -623,15 +712,20 @@ private struct PaneRail: View {
                                     },
                                     close: { workspaceStore.closeExternalWebLink(webLink.id) }
                                 )
+                                }
                             }
                         }
                     }
 
                     if workspaceStore.isCodexRunning || !workspaceStore.codexResult.isEmpty {
-                        paneSection("Tools", icon: "sparkles", count: 1) {
+                        VStack(alignment: .leading, spacing: 5) {
+                            Label("Tools  1", systemImage: "sparkles")
+                                .font(.system(size: 10, weight: .semibold))
+                                .foregroundStyle(.purple)
                             paneRow(
                                 title: "Incident triage",
                                 icon: "sparkles",
+                                iconColor: .purple,
                                 isActive: workspaceStore.isShowingCodexResult,
                                 select: { workspaceStore.isShowingCodexResult = true },
                                 close: workspaceStore.isCodexRunning ? nil : { workspaceStore.closeCodexResult() }
@@ -648,15 +742,13 @@ private struct PaneRail: View {
     }
 
     private func paneSection<Content: View>(
-        _ title: String,
-        icon: String,
-        count: Int,
+        _ category: PaneCategory,
         @ViewBuilder content: () -> Content
     ) -> some View {
         VStack(alignment: .leading, spacing: 5) {
-            Label("\(title)  \(count)", systemImage: icon)
+            Label("\(category.title)  \(count(for: category))", systemImage: category.icon)
                 .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(category.color)
             content()
         }
     }
@@ -664,6 +756,7 @@ private struct PaneRail: View {
     private func paneRow(
         title: String,
         icon: String,
+        iconColor: Color,
         isActive: Bool,
         select: @escaping () -> Void,
         close: (() -> Void)?
@@ -673,9 +766,13 @@ private struct PaneRail: View {
                 select()
                 isExpanded = false
             } label: {
-                Label(title, systemImage: icon)
-                    .lineLimit(1)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                HStack(spacing: 6) {
+                    Image(systemName: icon)
+                        .foregroundStyle(iconColor)
+                    Text(title)
+                        .lineLimit(1)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
             .buttonStyle(.plain)
 
