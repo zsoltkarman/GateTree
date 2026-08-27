@@ -25,6 +25,10 @@ private struct EmbeddedSSHTerminal: NSViewRepresentable {
     func makeNSView(context: Context) -> LocalProcessTerminalView {
         let terminal = GateTreeTerminalView(frame: .zero)
         terminal.font = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
+        // On Hungarian and other international layouts Option is used to type
+        // characters such as |, @ and €. Keep it as the macOS compose key
+        // instead of treating it as the terminal Meta modifier.
+        terminal.optionAsMetaKey = false
         var arguments = ["-p", String(connection.port)]
         if !connection.username.isEmpty { arguments += ["-l", connection.username] }
         if let tunnel = connection.localTunnel {
