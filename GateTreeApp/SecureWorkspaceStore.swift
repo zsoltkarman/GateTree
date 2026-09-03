@@ -108,6 +108,10 @@ final class SecureWorkspaceStore: ObservableObject {
     private var workspaceReloadTask: Task<Void, Never>?
     private var workspaceReloadTimer: Timer?
     private var workspaceModificationDate: Date?
+    /// Saving an encrypted workspace takes long enough for another edit to
+    /// arrive before the current write has finished. Keep one follow-up save
+    /// queued so that the on-disk workspace never falls behind memory.
+    private var hasPendingSave = false
 
     init(fileManager: FileManager = .default) {
         chromeTabIDsByWebLinkID = Dictionary(
@@ -343,7 +347,11 @@ final class SecureWorkspaceStore: ObservableObject {
     }
 
     func save() {
-        guard !isProcessing else { return }
+        guard isUnlocked else { return }
+        guard !isProcessing else {
+            hasPendingSave = true
+            return
+        }
 
         isProcessing = true
         let currentWorkspace = workspace
@@ -363,6 +371,10 @@ final class SecureWorkspaceStore: ObservableObject {
                     self.isProcessing = false
                     self.errorMessage = nil
                     self.workspaceModificationDate = self.currentWorkspaceModificationDate()
+                    if self.hasPendingSave {
+                        self.hasPendingSave = false
+                        self.save()
+                    }
                 }
             } catch {
                 await MainActor.run {
