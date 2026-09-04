@@ -43,7 +43,7 @@ private struct EmbeddedSSHTerminal: NSViewRepresentable {
         terminal.startProcessWhenLaidOut(
             executable: "/usr/bin/ssh",
             args: arguments,
-            environment: askPassEnvironment(password: password)
+            environment: sshEnvironment(password: password)
         )
         if isActive { DispatchQueue.main.async { terminal.window?.makeFirstResponder(terminal) } }
         return terminal
@@ -56,15 +56,22 @@ private struct EmbeddedSSHTerminal: NSViewRepresentable {
         }
     }
 
-    private func askPassEnvironment(password: String?) -> [String]? {
-        guard let password, !password.isEmpty else { return nil }
+    private func sshEnvironment(password: String?) -> [String] {
+        var environment = ProcessInfo.processInfo.environment.map { "\($0.key)=\($0.value)" }
+        // Minimal Oracle Linux installations often include `xterm` but not
+        // the extended `xterm-256color` terminfo entry.  Advertising xterm
+        // keeps curses applications such as `watch` usable on both minimal
+        // and full remote hosts.
+        environment.removeAll { $0.hasPrefix("TERM=") }
+        environment.append("TERM=xterm")
+
+        guard let password, !password.isEmpty else { return environment }
         let helperURL = FileManager.default.temporaryDirectory.appendingPathComponent("gatetree-ssh-askpass-\(UUID().uuidString)")
         let script = "#!/bin/sh\nprintf '%s\\n' \"$GATETREE_SSH_PASSWORD\"\n"
         do {
             try script.write(to: helperURL, atomically: true, encoding: .utf8)
             try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: helperURL.path)
-        } catch { return nil }
-        var environment = ProcessInfo.processInfo.environment.map { "\($0.key)=\($0.value)" }
+        } catch { return environment }
         environment += ["SSH_ASKPASS=\(helperURL.path)", "SSH_ASKPASS_REQUIRE=force", "DISPLAY=gatetree:0", "GATETREE_SSH_PASSWORD=\(password)"]
         return environment
     }
