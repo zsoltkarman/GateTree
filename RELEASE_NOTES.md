@@ -1,8 +1,10 @@
-# GateTree 0.4.4
+# GateTree 0.4.5
 
-## Notes persistence fix
+## Embedded SSH terminal fixes
 
-- Fixed a race condition that could leave recently changed encrypted notes out
-  of the workspace file when a prior save was still running.
-- Pending changes now trigger a follow-up save, so closing and reopening the
-  laptop cannot reload an older workspace version over current notes.
+- Fixed cursor-key input in embedded SSH sessions. Up, down, left and right
+  now send their standard VT100 sequences directly to the remote shell.
+- SSH starts only once the terminal has a real allocated size, preventing
+  history redraws from placing prompts and commands on the same line.
+- Dragging to select now copies output while long-running commands, such as
+  `podman pull`, are updating their progress display.
